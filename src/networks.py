@@ -29,27 +29,27 @@ class PINN(nn.Module):
 # --------------------------------------------------
 # Network factory for dispersion problem
 # --------------------------------------------------
-def get_all_networks():
+def get_all_networks(width=50, depth=8):
     """
     Returns PINN models for:
-    - Functionally graded layer (single output: V)
-    - Functionally graded half-space (single output: V)
+    - Functionally graded layer
+    - Functionally graded half-space
     """
 
-    # Layer: input z → output V(z)
+    # Layer network
     net_layer = PINN(
         in_dim=1,
-        out_dim=1,   # single field
-        width=50,
-        depth=8
+        out_dim=1,
+        width=width,
+        depth=depth
     )
 
-    # Half-space: input z → output V(z)
+    # Half-space network
     net_halfspace = PINN(
         in_dim=1,
-        out_dim=1,   # single field
-        width=50,
-        depth=8
+        out_dim=1,
+        width=width,
+        depth=depth
     )
 
     return net_layer, net_halfspace
