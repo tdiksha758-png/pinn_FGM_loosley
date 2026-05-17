@@ -1,14 +1,14 @@
 import torch
 import torch.optim as optim
-from networks import get_all_networks
-from config import CONFIG
-from sampling import (
+from src.networks import get_all_networks
+from src.config import CONFIG
+from src.sampling import (
     sample_domain_points,
     sample_top_surface,
     sample_interface,
     sample_far_field
 )
-from losses import total_loss
+from src.losses import total_loss
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -172,8 +172,8 @@ def train_dispersion():
         geom["num_k"]
     )
 
-    # Initialize networks ONCE
-    model_layer, model_half = get_all_networks()
+    # Initialize networks ONCE (use activation from CONFIG)
+    model_layer, model_half = get_all_networks(activation=CONFIG.get("ACTIVATION", "tanh"))
     model_layer.to(DEVICE)
     model_half.to(DEVICE)
 
@@ -212,7 +212,7 @@ def train_dispersion():
 if __name__ == "__main__":
     print("\nRunning Love-wave PINN solver...\n")
 
-    model_layer, model_half = get_all_networks()
+    model_layer, model_half = get_all_networks(activation=CONFIG.get("ACTIVATION", "tanh"))
     model_layer.to(DEVICE)
     model_half.to(DEVICE)
 
