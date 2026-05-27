@@ -1,14 +1,17 @@
 import torch
 import torch.nn as nn
 
+
 # --------------------------------------------------
 # Generic PINN network
 # --------------------------------------------------
 class PINN(nn.Module):
     """
-    Fully-connected neural network for PINN
+    Fully-connected neural network for multi-field PINN
+    Outputs: [U_r, U_i, Phi_r, Phi_i]
     """
-    def __init__(self, in_dim, out_dim, width=128, depth=8):
+
+    def __init__(self, in_dim, out_dim, width=64, depth=3):
         super().__init__()
 
         layers = []
@@ -20,6 +23,7 @@ class PINN(nn.Module):
             layers.append(nn.Tanh())
 
         layers.append(nn.Linear(width, out_dim))
+
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
@@ -27,29 +31,40 @@ class PINN(nn.Module):
 
 
 # --------------------------------------------------
-# Network factory for dispersion problem
+# Network factory
 # --------------------------------------------------
 def get_all_networks():
     """
     Returns PINN models for:
-    - Functionally graded layer (single output: V)
-    - Functionally graded half-space (single output: V)
+    - Layer 1 (piezo-viscoelastic)
+    - Layer 2 (piezo-viscoelastic)
+    - Air layer (electrostatic)
+    
+    ✅ INCREASED CAPACITY for better convergence
     """
 
-    # Layer: input z → output V(z)
-    net_layer = PINN(
-        in_dim=1,
-        out_dim=1,   # single field
-        width=50,
-        depth=8
+    # 🔹 Layer 1
+    net_L1 = PINN(
+        in_dim=2,
+        out_dim=4,   # [U_r, U_i, Phi_r, Phi_i]
+        width=128,   # INCREASED from 64
+        depth=5      # INCREASED from 3
     )
 
-    # Half-space: input z → output V(z)
-    net_halfspace = PINN(
-        in_dim=1,
-        out_dim=1,   # single field
-        width=50,
-        depth=8
+    # 🔹 Layer 2
+    net_L2 = PINN(
+        in_dim=2,
+        out_dim=4,
+        width=128,   # INCREASED from 64
+        depth=5      # INCREASED from 3
     )
 
-    return net_layer, net_halfspace
+    # 🔹 Air layer
+    net_L3 = PINN(
+        in_dim=2,
+        out_dim=4,   # still 4 for consistency (U unused)
+        width=128,   # INCREASED from 64
+        depth=5      # INCREASED from 3
+    )
+
+    return net_L1, net_L2, net_L3

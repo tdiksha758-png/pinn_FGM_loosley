@@ -1,121 +1,257 @@
 import torch
 import torch.nn as nn
-from .pde_residual import residual_layer_FGM, residual_halfspace_FGM
-from .boundary_conditions import top_surface_bc, halfspace_far_field_bc, imperfect_interface_bc
+
+from .pde_residual import (
+    residual_layer1_piezo,
+    residual_layer2_piezo,
+    residual_layer3_air
+)
+
+from .boundary_conditions import (
+    top_surface_bc,
+    bottom_surface_bc,
+    imperfect_interface_bc
+)
 
 mse = nn.MSELoss()
 
-# --------------------------------------------------
-# PDE loss
-# --------------------------------------------------
-def compute_pde_loss(model_layer, model_half, z_layer, z_half, params_layer, params_half, k, c):
+
+# ==================================================
+# RESIDUAL NORMALIZATION HELPER
+# ==================================================
+def normalize_residuals(residuals, scale_factor=1e9):
     """
-    PDE residual loss for layer and half-space
+    Normalize residuals by dividing by a characteristic scale
+    to avoid large coefficient magnitudes overwhelming the loss.
+    
+    Args:
+        residuals: list of residual tensors
+        scale_factor: typical magnitude of material parameters
     """
-
-    # Residuals (real displacement only)
-    rL = residual_layer_FGM(model_layer, z_layer, k, c, params_layer)
-    rH = residual_halfspace_FGM(model_half, z_half, k, c, params_half)
-
-    loss_pde = mse(rL, torch.zeros_like(rL)) + mse(rH, torch.zeros_like(rH))
-    return loss_pde
-
-
-# --------------------------------------------------
-# Top surface boundary loss
-# --------------------------------------------------
-def compute_top_surface_loss(model_layer, z_top, params_layer):
-    """
-    Stress-free top surface: tau_23 = 0
-    """
-    tau = top_surface_bc(model_layer, z_top, params_layer)
-    loss_bc = mse(tau, torch.zeros_like(tau))
-    return loss_bc
+    normalized = []
+    for res in residuals:
+        # Normalize by scale factor to prevent overflow
+        # Keep numerical stability by clamping
+        norm_res = res / (scale_factor + 1e-12)
+        normalized.append(norm_res)
+    return normalized
 
 
-
-# --------------------------------------------------
-# Interface loss (layer ↔ half-space)
-# --------------------------------------------------
-def compute_interface_loss(
-    model_layer,
-    model_half,
-    z_int,
-    params_layer,
-    params_half,
-    w_disp=1.0,
-    w_stress=1.0
+# ==================================================
+# PDE LOSS (3 LAYERS) - WITH NORMALIZATION
+# ==================================================
+# ==================================================
+# PDE LOSS (3 LAYERS)
+# ==================================================
+def compute_pde_loss(
+    model_L1, model_L2, model_L3,
+    x_L1, x_L2, x_L3,
+    params_L1, params_L2, params_L3,
+    k, c
 ):
-    """
-    Interface loss using imperfect interface BC
-    """
 
-    # Get residuals from BC
-    res_interface, res_stress = imperfect_interface_bc(
-        model_layer, model_half, z_int, params_layer, params_half
+    # --------------------------------------------------
+    # Layer 1
+    # --------------------------------------------------
+    R1r_L1, R1i_L1, R2r_L1, R2i_L1 = residual_layer1_piezo(
+        model_L1, x_L1, k, c, params_L1
     )
 
-    # Loss terms
-    loss_disp = mse(res_interface, torch.zeros_like(res_interface))
-    loss_stress = mse(res_stress, torch.zeros_like(res_stress))
+    # --------------------------------------------------
+    # Layer 2
+    # --------------------------------------------------
+    R1r_L2, R1i_L2, R2r_L2, R2i_L2 = residual_layer2_piezo(
+        model_L2, x_L2, k, c, params_L2
+    )
 
-    # Total interface loss
-    return w_disp * loss_disp + w_stress * loss_stress
+    # --------------------------------------------------
+    # Air Layer
+    # --------------------------------------------------
+    R3r, R3i, Dx3r, Dx3i = residual_layer3_air(
+        model_L3,
+        x_L3,
+        k,
+        params_L3["tau_0"]
+    )
 
-# --------------------------------------------------
-# Far-field loss
-# --------------------------------------------------
-def compute_far_field_loss(model_half, z_far):
-    """
-    Half-space decay condition: V -> 0
-    """
-    V = halfspace_far_field_bc(model_half, z_far)
-    loss_far = mse(V, torch.zeros_like(V))
-    return loss_far
+    # --------------------------------------------------
+    # Scaling
+    # --------------------------------------------------
+    scale = 1e5
+
+    # --------------------------------------------------
+    # SOLID PDE LOSS
+    # --------------------------------------------------
+    loss_solid = (
+
+        mse(R1r_L1 / scale, torch.zeros_like(R1r_L1)) +
+        mse(R1i_L1 / scale, torch.zeros_like(R1i_L1)) +
+        mse(R2r_L1 / scale, torch.zeros_like(R2r_L1)) +
+        mse(R2i_L1 / scale, torch.zeros_like(R2i_L1)) +
+
+        mse(R1r_L2 / scale, torch.zeros_like(R1r_L2)) +
+        mse(R1i_L2 / scale, torch.zeros_like(R1i_L2)) +
+        mse(R2r_L2 / scale, torch.zeros_like(R2r_L2)) +
+        mse(R2i_L2 / scale, torch.zeros_like(R2i_L2))
+
+    )
+
+    # --------------------------------------------------
+    # AIR PDE LOSS
+    # --------------------------------------------------
+    loss_air = (
+
+        mse(R3r, torch.zeros_like(R3r)) +
+        mse(R3i, torch.zeros_like(R3i)) +
+        mse(Dx3r / scale, torch.zeros_like(Dx3r)) +
+        mse(Dx3i / scale, torch.zeros_like(Dx3i))
+
+    )
+
+    return loss_solid, loss_air
 
 
-# --------------------------------------------------
-# Total loss
-# --------------------------------------------------
-def total_loss(
-    model_layer,
-    model_half,
-    z_layer,
-    z_half,
-    z_top,
-    z_int,
-    z_far,
-    params_layer,
-    params_half,
+# ==================================================
+# TOP SURFACE (x = -h1)
+# ==================================================
+def compute_top_surface_loss(model_L1, x_top, params_L1, k, c):
+    sigma_r, sigma_i, phi_r, phi_i = top_surface_bc(
+        model_L1, x_top, params_L1, k, c
+    )
+
+    loss = (
+        mse(sigma_r, torch.zeros_like(sigma_r)) +
+        mse(sigma_i, torch.zeros_like(sigma_i)) +
+        mse(phi_r, torch.zeros_like(phi_r)) +
+        mse(phi_i, torch.zeros_like(phi_i))
+    )
+
+    return loss
+
+
+# ==================================================
+# BOTTOM SURFACE (x = h2)
+# ==================================================
+def compute_bottom_surface_loss(model_L2, x_bot, params_L2, k, c):
+    sigma_r, sigma_i, Dx_r, Dx_i = bottom_surface_bc(
+        model_L2, x_bot, params_L2, k, c
+    )
+
+    loss = (
+        mse(sigma_r, torch.zeros_like(sigma_r)) +
+        mse(sigma_i, torch.zeros_like(sigma_i)) +
+        mse(Dx_r, torch.zeros_like(Dx_r)) +
+        mse(Dx_i, torch.zeros_like(Dx_i))
+    )
+
+    return loss
+
+
+# ==================================================
+# INTERFACE (x = 0)
+# ==================================================
+def compute_interface_loss(
+    model_L1,
+    model_L2,
+    x_int,
     k,
     c,
-    w_pde = 10.0,
-    w_bc  = 1.0,
-    w_int = 10,
-    w_far = 0.1,
-    w_amp = 100
+    params_L1,
+    params_L2,
+    params_int
 ):
-    """
-    Total PINN loss for SH-wave dispersion analysis
-    """
-    # Amplitude fixing at top surface
-    pred_top = model_layer(z_top)
-    V_top = pred_top
-    amp_loss = mse(V_top, torch.ones_like(V_top))
 
-    # Compute all losses
-    loss_pde = compute_pde_loss(model_layer, model_half, z_layer, z_half, params_layer, params_half, k, c)
-    loss_bc  = compute_top_surface_loss(model_layer, z_top, params_layer)
-    loss_int = compute_interface_loss(model_layer, model_half, z_int, params_layer, params_half)
-    loss_far = compute_far_field_loss(model_half, z_far)
+    eq1_r, eq1_i, eq2_r, eq2_i, eq3_r, eq3_i, eq4_r, eq4_i = imperfect_interface_bc(
+        model_L1, model_L2, x_int,
+        params_L1, params_L2, params_int,
+        k, c
+    )
 
-    # Total weighted loss
-    loss_total = w_pde * loss_pde + w_bc * loss_bc + w_int * loss_int + w_far * loss_far + w_amp * amp_loss
+    # Combine all 4 interface equations (stress, displacement, potential, E-displacement)
+    loss = (
+        mse(eq1_r, torch.zeros_like(eq1_r)) +
+        mse(eq1_i, torch.zeros_like(eq1_i)) +
+        mse(eq2_r, torch.zeros_like(eq2_r)) +
+        mse(eq2_i, torch.zeros_like(eq2_i)) +
+        mse(eq3_r, torch.zeros_like(eq3_r)) +
+        mse(eq3_i, torch.zeros_like(eq3_i)) +
+        mse(eq4_r, torch.zeros_like(eq4_r)) +
+        mse(eq4_i, torch.zeros_like(eq4_i))
+    )
+
+    return loss
+
+
+# ==================================================
+# AMPLITUDE NORMALIZATION
+# ==================================================
+def compute_amplitude_loss(model_L1, x_top, k, c):
+
+    # Create [x, k] input tensor
+    k_top = torch.full_like(x_top, k.item() if hasattr(k, 'item') else float(k))
+    inp_top = torch.cat([x_top, k_top], dim=1)
+    
+    pred = model_L1(inp_top)
+
+    U_r = pred[:, 0:1]
+    U_i = pred[:, 1:2]
+
+    amp = U_r**2 + U_i**2
+
+    return mse(amp, torch.ones_like(amp))
+
+
+# ==================================================
+# TOTAL LOSS
+# ==================================================
+def total_loss(
+    model_L1,
+    model_L2,
+    model_L3,
+    x_L1,
+    x_L2,
+    x_L3,
+    x_top,
+    x_int,
+    x_bot,
+    params_L1,
+    params_L2,
+    params_L3,
+    params_int,
+    k,
+    c,
+    u_pde=10.0,
+    u_air=1.0,
+    u_bc=1.0,
+    u_int=10.0,
+    u_amp=100.0
+):
+
+    loss_pde, loss_air = compute_pde_loss(
+        model_L1, model_L2, model_L3,
+        x_L1, x_L2, x_L3,
+        params_L1, params_L2, params_L3,
+        k, c
+    )
+
+    loss_top = compute_top_surface_loss(model_L1, x_top, params_L1, k, c)
+    loss_bot = compute_bottom_surface_loss(model_L2, x_bot, params_L2, k, c)
+    loss_int = compute_interface_loss(model_L1, model_L2, x_int, k, c, params_L1, params_L2, params_int)
+    loss_amp = compute_amplitude_loss(model_L1, x_top, k, c)
+
+    loss_total = (
+      u_pde * loss_pde +
+      u_air * loss_air +
+      u_bc  * (loss_top + loss_bot) +
+      u_int * loss_int +
+     u_amp * loss_amp
+    )
 
     return loss_total, {
-        "pde": loss_pde.item(),
-        "bc_top": loss_bc.item(),
-        "interface": loss_int.item(),
-        "far": loss_far.item(),
-        "amp": amp_loss.item()
+     "pde": loss_pde.item(),
+     "air": loss_air.item(),
+     "bc_top": loss_top.item(),
+     "bc_bottom": loss_bot.item(),
+     "interface": loss_int.item(),
+     "amp": loss_amp.item()
     }

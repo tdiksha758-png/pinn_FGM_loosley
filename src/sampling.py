@@ -11,75 +11,102 @@ def sample_uniform(n, low, high):
         n, 1, device=DEVICE, dtype=torch.float32
     )
 
+
 # --------------------------------------------------
-# Domain sampling
+# Domain sampling (3 regions)
 # --------------------------------------------------
-def sample_domain_points(n_domain, geom):
+def sample_domain_points(n_domain, domain):
     """
     Returns:
-        z_layer   : points in layer domain [-H, 0] (non-dimensional)
-        z_half    : points in half-space [0, L] (non-dimensional)
+        x_L1 : points in layer1   [domain["LAYER1"][0], domain["LAYER1"][1]]
+        x_L2 : points in layer2   [domain["LAYER2"][0], domain["LAYER2"][1]]
+        x_L3 : points in air      [domain["AIR"][0], domain["AIR"][1]]
     """
 
-    H = geom.get("H", 1.0)
-    L = geom.get("L", 29.0)
+    # Unpack ranges
+    xL1_min, xL1_max = domain["LAYER1"]
+    xL2_min, xL2_max = domain["LAYER2"]
+    xL3_min, xL3_max = domain["AIR"]
 
-    # Layer: z ∈ [-H, 0]
-    z_layer = sample_uniform(n_domain, -H, 0.0)
+    # Sample
+    x_L1 = sample_uniform(n_domain, xL1_min, xL1_max)
+    x_L2 = sample_uniform(n_domain, xL2_min, xL2_max)
+    x_L3 = sample_uniform(n_domain, xL3_min, xL3_max)
 
-    # Half-space: z ∈ [0, L]
-    z_half = sample_uniform(n_domain, 0.0, L)
-
-    return (
-        z_layer.to(DEVICE),
-        z_half.to(DEVICE),
-    )
+    return x_L1, x_L2, x_L3
 
 
 # --------------------------------------------------
-# Top surface boundary (z = -H)
+# Top surface (x = -h1)
 # --------------------------------------------------
 def sample_top_surface(n_boundary, geom):
     """
-    Top free surface at z = -H (non-dimensional)
+    Top surface of layer1 at x = -h1
     """
 
-    H = geom.get("H", 6.0)
+    h1 = geom["h1"]
 
-    z_top = torch.full(
+    x_top = torch.full(
         (n_boundary, 1),
-        -float(H),                # force float value
-        dtype=torch.float32,      # force float dtype
+        -float(h1),
+        dtype=torch.float32,
         device=DEVICE
     )
 
-    return z_top
-
+    return x_top
 
 
 # --------------------------------------------------
-# Interface boundary (z = 0)
+# Interface between Layer1 and Layer2 (x = 0)
 # --------------------------------------------------
 def sample_interface(n_interface):
     """
-    Interface between layer and half-space at z = 0 (non-dimensional)
+    Interface between layer1 and layer2 at x = 0
     """
 
-    z_int = torch.zeros((n_interface, 1))
+    x_int = torch.zeros((n_interface, 1), device=DEVICE)
 
-    return z_int.to(DEVICE)
+    return x_int
 
 
 # --------------------------------------------------
-# Far-field boundary (z = L)
+# Bottom surface (x = h2)
 # --------------------------------------------------
+def sample_bottom_surface(n_boundary, geom):
+    """
+    Bottom of layer2 at x = h2
+    """
+
+    h2 = geom["h2"]
+
+    x_bot = torch.full(
+        (n_boundary, 1),
+        float(h2),
+        dtype=torch.float32,
+        device=DEVICE
+    )
+
+    return x_bot
+
+
+# --------------------------------------------------
+# Air far-field (x = -h1 - h3)
+# --------------------------------------------------
+# Generic far-field sampler (wrapper)
 def sample_far_field(n_far, geom):
     """
-    Far-field boundary for half-space at z = L (non-dimensional)
+    Far-field in air at x = -h1 - h3
     """
 
-    L = geom.get("L", 29.0*6)
+    h1 = geom["h1"]
+    h3 = geom["h3"]
 
-    z_far = torch.full((n_far, 1), L)
+    x_far = torch.full(
+        (n_far, 1),
+        -(float(h1) + float(h3)),
+        
+        dtype=torch.float32,
+        device=DEVICE
+    )
 
-    return z_far.to(DEVICE)
+    return x_far

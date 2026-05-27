@@ -1,106 +1,177 @@
 import torch
-from .utils import gradients
 
 # --------------------------------------------------
-# Top surface boundary condition (z = -H_layer)
-# Stress-free: tau_23 = 0
+# Gradient helper
 # --------------------------------------------------
-def top_surface_bc(model_layer, z_top, material_params):
-    """
-    Stress-free top surface:
-    tau_23 = mu44 * dV/dz = 0
-    Single real field
-    """
-
-    z_top = z_top.clone().detach().requires_grad_(True)
-
-    V = model_layer(z_top)
-    V_z = gradients(V, z_top)
-
-    # Linear FGM: mu44 = mu44_0 * (1 + alpha1 * z)
-    mu44_0 = material_params["mu_0"]
-    alpha1 = material_params["alpha"]
-    P1 = material_params.get("P_0", 0.0)
-
-    mu44 = mu44_0 * (1 + alpha1 * z_top)
-    tau =  V_z 
-    return tau
+def grad_bc(u, x):
+    return torch.autograd.grad(
+        u, x,
+        grad_outputs=torch.ones_like(u),
+        create_graph=True,
+        retain_graph=True
+    )[0]
 
 
-# # --------------------------------------------------
-# # Interface between layer and half-space (z = 0)
-# # --------------------------------------------------
-# def interface_layer_halfspace(model_layer, model_half, z_int,
-#                               params_layer, params_half):
-#     """
-#     Interface conditions:
-#     - Displacement continuity: V_layer = V_half
-#     - Stress continuity: mu44_layer * dV_layer/dz = mu44_half * dV_half/dz
-#     """
+# ==================================================
+# 🔹 TOP SURFACE (x = -h1)  — SHORT CIRCUIT
+#    BC: σ_xz = 0,  φ = 0
+# ==================================================
+def top_surface_bc(model_L1, x_top, params_L1, k, c):
 
-#     z_int = z_int.clone().detach().requires_grad_(True)
-
-#     V_layer = model_layer(z_int)
-#     V_half  = model_half(z_int)
-
-#     # Derivatives
-#     V_layer_z = gradients(V_layer, z_int)
-#     V_half_z  = gradients(V_half, z_int)
-
-#     # Graded shear moduli
-#     mu44_l0 = params_layer["mu_0"]
-#     alpha1 = params_layer["alpha"]
-#     P1 = params_layer.get("P_0", 0.0)
-#     mu44_l = mu44_l0 * (1 + alpha1 * z_int)
-
-#     mu44_h0 = params_half["mu_0"]
-#     alpha2 = params_half["alpha"]
-#     P2 = params_half.get("P_0", 0.0)
-#     mu44_h = mu44_h0 * (1 + alpha2 * z_int)**2
-
-#     # Residuals: displacement and stress continuity
-#     res_disp = V_layer - V_half
-#     res_stress = (mu44_l * V_layer_z  - (mu44_h * V_half_z)) / mu44_l0
-
-#     return  res_stress
-
-def imperfect_interface_bc(model_layer, model_half, z_int, params_layer, params_half):
-    """
-    Imperfect interface condition:
-    tau_23 = K * (V_half - V_layer)
-    """
-
-     
-    z_int = z_int.clone().detach().requires_grad_(True)
-
-    V_layer = model_layer(z_int)
-    V_half  = model_half(z_int)
-
-    # Derivatives for shear stress
-    V_layer_z = gradients(V_layer, z_int)
-    V_half_z  = gradients(V_half, z_int)
+    x_top = x_top.clone().detach().requires_grad_(True)
     
-    # Shear moduli
-    mu44_l = params_layer["mu_0"] * (1 + params_layer["alpha"] * z_int)
-    mu44_h = params_half["mu_0"] * (1 + params_half["alpha"] * z_int)**2
-    K= params_layer["mu_0"]/(params_layer["s"]*params_layer["L"]);
-    mu44_l0=params_layer["mu_0"]
-    # Interfacial stiffness
-    # K = params_layer.get("K", 1e3)
+    # Create [x, k] input tensor
+    k_top = torch.full_like(x_top, k.item() if hasattr(k, 'item') else float(k))
+    inp_top = torch.cat([x_top, k_top], dim=1)
+    
+    out = model_L1(inp_top)
 
-    # Residual: tau_23 - K*(V_half - V_layer)
-    res_interface =((mu44_l * V_layer_z) - K * (V_half - V_layer))/mu44_l
-    res_stress = (mu44_l * V_layer_z  - (mu44_h * V_half_z)) / mu44_l0
+    U_r, U_i = out[:, 0:1], out[:, 1:2]
+    Phi_r, Phi_i = out[:, 2:3], out[:, 3:4]
 
-    return res_interface, res_stress
-# --------------------------------------------------
-# Far-field boundary condition (z -> infinity)
-# --------------------------------------------------
-def halfspace_far_field_bc(model_half, z_far):
-    """
-    Half-space decay condition: V -> 0 as z -> infinity
-    """
-    z_far = z_far.clone().detach().requires_grad_(True)
-    V_far = model_half(z_far)
+    U_r_x   = grad_bc(U_r,   x_top)
+    U_i_x   = grad_bc(U_i,   x_top)
+    Phi_r_x = grad_bc(Phi_r, x_top)
+    Phi_i_x = grad_bc(Phi_i, x_top)
 
-    return V_far
+    C_r = params_L1["C44R1"]
+    C_i = k*c*params_L1["C44I1"]
+    e_r = params_L1["e15R1"]
+    e_i = k*c*params_L1["e15I1"]
+
+    # σ_xz = C*∂u + e*∂φ = 0
+    # Divide by C_r so residual ~ O(∂u) ~ O(1)
+    sigma_r = (C_r * U_r_x - C_i * U_i_x + e_r * Phi_r_x - e_i * Phi_i_x) / C_r
+    sigma_i = (C_r * U_i_x + C_i * U_r_x + e_r * Phi_i_x + e_i * Phi_r_x) / C_r
+
+    # φ = 0  (network output, no scaling needed)
+    return sigma_r, sigma_i, Phi_r, Phi_i
+
+
+# ==================================================
+# 🔹 BOTTOM SURFACE (x = h2)
+#    BC: σ_xz = 0,  D_x = 0
+# ==================================================
+def bottom_surface_bc(model_L2, x_bot, params_L2, k, c):
+
+    x_bot = x_bot.clone().detach().requires_grad_(True)
+    
+    # Create [x, k] input tensor
+    k_bot = torch.full_like(x_bot, k.item() if hasattr(k, 'item') else float(k))
+    inp_bot = torch.cat([x_bot, k_bot], dim=1)
+    
+    out = model_L2(inp_bot)
+
+    U_r, U_i = out[:, 0:1], out[:, 1:2]
+    Phi_r, Phi_i = out[:, 2:3], out[:, 3:4]
+
+    U_r_x   = grad_bc(U_r,   x_bot)
+    U_i_x   = grad_bc(U_i,   x_bot)
+    Phi_r_x = grad_bc(Phi_r, x_bot)
+    Phi_i_x = grad_bc(Phi_i, x_bot)
+
+    C_r   = params_L2["C44R2"];  C_i   = k*c * params_L2["C44I2"]
+    e_r   = params_L2["e15R2"];  e_i   = k*c * params_L2["e15I2"]
+    tau_r = params_L2["tauR2"];  tau_i = k*c * params_L2["tauI2"]
+
+    # σ_xz = 0  — divide by C_r
+    sigma_r = (C_r * U_r_x - C_i * U_i_x + e_r * Phi_r_x - e_i * Phi_i_x) / C_r
+    sigma_i = (C_r * U_i_x + C_i * U_r_x + e_r * Phi_i_x + e_i * Phi_r_x) / C_r
+
+    # D_x = e*∂u - tau*∂φ = 0  — divide by e_r so residual ~ O(∂u)
+    Dx_r = (e_r * U_r_x - e_i * U_i_x - tau_r * Phi_r_x + tau_i * Phi_i_x) / e_r
+    Dx_i = (e_r * U_i_x + e_i * U_r_x - tau_r * Phi_i_x - tau_i * Phi_r_x) / e_r
+
+    return sigma_r, sigma_i, Dx_r, Dx_i
+
+
+# ==================================================
+# 🔹 INTERFACE (x = 0) — imperfect sliding contact
+#
+#  (1)  σ1 = (1-δ) σ2
+#  (2)  δ σ1 + (1-δ) kF u2 = (1-δ) kF u1
+#         ↔  δ σ1 + (1-δ) kF (u2 - u1) = 0
+#  (3)  φ1 = (1-δ) φ2
+#  (4)  D1 = (1-δ) D2
+# ==================================================
+def imperfect_interface_bc(
+    model_L1, model_L2, x_int,
+    params_L1, params_L2, params_int,
+    k, c
+):
+    delta = params_int["delta"]
+    F     = params_int["F"]
+
+    x_int = x_int.clone().detach().requires_grad_(True)
+
+    # Create [x, k] input tensors
+    k_int = torch.full_like(x_int, k.item() if hasattr(k, 'item') else float(k))
+    inp_int = torch.cat([x_int, k_int], dim=1)
+
+    out1 = model_L1(inp_int)
+    out2 = model_L2(inp_int)
+
+    U1_r,   U1_i   = out1[:, 0:1], out1[:, 1:2]
+    Phi1_r, Phi1_i = out1[:, 2:3], out1[:, 3:4]
+
+    U2_r,   U2_i   = out2[:, 0:1], out2[:, 1:2]
+    Phi2_r, Phi2_i = out2[:, 2:3], out2[:, 3:4]
+
+    U1_r_x   = grad_bc(U1_r,   x_int)
+    U1_i_x   = grad_bc(U1_i,   x_int)
+    Phi1_r_x = grad_bc(Phi1_r, x_int)
+    Phi1_i_x = grad_bc(Phi1_i, x_int)
+
+    U2_r_x   = grad_bc(U2_r,   x_int)
+    U2_i_x   = grad_bc(U2_i,   x_int)
+    Phi2_r_x = grad_bc(Phi2_r, x_int)
+    Phi2_i_x = grad_bc(Phi2_i, x_int)
+
+    # ── Layer 1 ───────────────────────────────────────────────────────────────
+    C1_r   = params_L1["C44R1"];   C1_i   = k*c * params_L1["C44I1"]
+    e1_r   = params_L1["e15R1"];   e1_i   = k*c * params_L1["e15I1"]
+    tau1_r = params_L1["tauR1"];   tau1_i = k*c * params_L1["tauI1"]
+
+    # ── Layer 2 ───────────────────────────────────────────────────────────────
+    C2_r   = params_L2["C44R2"];   C2_i   = k * c * params_L2["C44I2"]
+    e2_r   = params_L2["e15R2"];   e2_i   = k * c * params_L2["e15I2"]
+    tau2_r = params_L2["tauR2"];   tau2_i = k * c * params_L2["tauI2"]
+
+    # ── Stresses (physical units, Pa/m) ───────────────────────────────────────
+    sig1_r = C1_r*U1_r_x - C1_i*U1_i_x + e1_r*Phi1_r_x - e1_i*Phi1_i_x
+    sig1_i = C1_r*U1_i_x + C1_i*U1_r_x + e1_r*Phi1_i_x + e1_i*Phi1_r_x
+
+    sig2_r = C2_r*U2_r_x - C2_i*U2_i_x + e2_r*Phi2_r_x - e2_i*Phi2_i_x
+    sig2_i = C2_r*U2_i_x + C2_i*U2_r_x + e2_r*Phi2_i_x + e2_i*Phi2_r_x
+
+    # ── Electric displacements (physical units, C/m²) ─────────────────────────
+    Dx1_r = e1_r*U1_r_x - e1_i*U1_i_x - tau1_r*Phi1_r_x + tau1_i*Phi1_i_x
+    Dx1_i = e1_r*U1_i_x + e1_i*U1_r_x - tau1_r*Phi1_i_x - tau1_i*Phi1_r_x
+
+    Dx2_r = e2_r*U2_r_x - e2_i*U2_i_x - tau2_r*Phi2_r_x + tau2_i*Phi2_i_x
+    Dx2_i = e2_r*U2_i_x + e2_i*U2_r_x - tau2_r*Phi2_i_x - tau2_i*Phi2_r_x
+
+    one_d = 1.0 - delta
+
+    # ── Eq (1): σ1 - (1-δ) σ2 = 0
+    #    Units: Pa/m  →  divide by C1_r to get O(∂u) ~ O(1)
+    eq1_r = (sig1_r/one_d -  sig2_r) / C1_r
+    eq1_i = (sig1_i/one_d -  sig2_i) / C1_r
+
+    # ── Eq (2): δ σ1 + (1-δ) kF (u2 - u1) = 0
+    #    [δ σ1] ~ Pa/m,  [(1-δ) kF Δu] ~ (1/m)(Pa/m)(m) = Pa/m  ✓ consistent
+    #    divide by C1_r
+    eq2_r = ((delta * sig1_r)/one_d + (k * F * (U2_r - U1_r))) / C1_r
+    eq2_i = ((delta * sig1_i)/one_d + (k * F * (U2_i - U1_i))) / C1_r
+
+    # ── Eq (3): φ1 - (1-δ) φ2 = 0
+    #    Both are network outputs with same units; no extra scaling needed.
+    eq3_r = (Phi1_r/one_d - Phi2_r)/C1_r
+    eq3_i = (Phi1_i/one_d - Phi2_i)/C1_r
+
+    # ── Eq (4): D1 - (1-δ) D2 = 0
+    #    Units: C/m²  →  divide by e1_r to get O(∂u) ~ O(1)
+    eq4_r = (Dx1_r/one_d -  Dx2_r) / e1_r
+    eq4_i = (Dx1_i/one_d -  Dx2_i) / e1_r
+
+    return eq1_r, eq1_i, eq2_r, eq2_i, eq3_r, eq3_i, eq4_r, eq4_i

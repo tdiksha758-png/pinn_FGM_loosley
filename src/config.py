@@ -1,70 +1,120 @@
 """
-Configuration file for SH-wave dispersion in a functionally graded
-layered medium using PINNs
+Configuration file for piezo-viscoelastic layered medium (PINN)
+Compatible with residual_layer1_piezo, residual_layer2_piezo, residual_layer3_air
 """
 
 CONFIG = {
 
     # --------------------------------------------------
-    # Functionally Graded Layer (Linear variation)
+    # 🔹 Layer 1 (Upper Piezo-viscoelastic Layer)
     # --------------------------------------------------
-    "LAYER": {
-        "mu_0": 0.3e11,         # Shear modulus at reference (Pa)
-        "rho_0": 7500.0,          # Density (kg/m^3)
-        "P_0": 1e7,               # Initial stress along x1 (Pa)
-        "alpha": 0.2,             # Grading parameter along thickness
-        "s": 100.0,               # Raw stiffness of imperfect interface
-        "L": 2.0,                 # Layer thickness
+    "LAYER1": {
+        "C44R1": 7.511e9,
+        "C44I1": 9.7252e9,
+
+        "e15R1": -0.0919,
+        "e15I1": -0.000285,
+
+        "tauR1": -0.3041e-9,
+        "tauI1": -0.02e-12,
+
+        "rho1": 3949.0,
+        "sigma1": 1e11,
+
+        "h1": 8.0
     },
 
     # --------------------------------------------------
-    # Functionally Graded Substrate (Quadratic variation)
+    # 🔹 Layer 2 (Lower Piezo-viscoelastic Layer)
     # --------------------------------------------------
-    "SUBSTRATE": {
-        "mu_0": 0.28e11,          # Shear modulus at reference (Pa)
-        "rho_0": 2800.0,          # Density (kg/m^3)
-        "P_0": 1e7,               # Initial stress along x1 (Pa)
-        "alpha": 0.9,             # Quadratic grading parameter
+    "LAYER2": {
+        "C44R2": 8.172e9,
+        "C44I2": 32.239e9,
+
+        "e15R2": -0.0968,
+        "e15I2": -0.0003,
+
+        "tauR2": -0.4187e-9,
+        "tauI2": -2.55e-12,
+
+        "rho2": 3259.0,
+        "sigma2": 1e11,
+
+        "h2": 2.0
     },
 
-    
     # --------------------------------------------------
-    # Geometry
+    # 🔹 Layer 3 (Air / Vacuum)
+    # --------------------------------------------------
+    "AIR": {
+        "h3": 30.0,
+        "tau_0": 8.854e-12
+    },
+
+    # --------------------------------------------------
+    # 🔹 Interface Properties
+    # --------------------------------------------------
+    "INTERFACE": {
+        "F": 1e9,        # Interface stiffness
+        "delta": 0.2     # Sliding parameter
+    },
+
+    # --------------------------------------------------
+    # 🔹 Geometry
     # --------------------------------------------------
     "GEOMETRY": {
-        "L": 2.0,                 # Layer thickness
-        "H_trunc": 30.0,          # Truncated depth for substrate
+        "h1": 8.0,
+        "h2": 2.0,
+        "h3": 30.0
+    },
+    # 🔹 Domain definition (NEW - IMPORTANT)
+    # --------------------------------------------------
+    "DOMAIN": {
+        "air":  [-30.0, -8.0],   # [-h1-h3, -h1]
+        "layer1": [-8.0, 0.0],   # [-h1, 0]
+       "layer2": [0.0, 2.0]     # [0, h2]
     },
 
     # --------------------------------------------------
-    # Wavenumber sweep (non-dimensional)
+    # 🔹 Wavenumber sweep
     # --------------------------------------------------
     "WAVENUMBER": {
-        "k_min": 0.052,
-        "k_max": 0.25,
-        "num_k": 16
+        "k_min": 0.4015,
+        "k_max": 1.25,
+        "num_k": 8
     },
 
     # --------------------------------------------------
-    # Training parameters
+    # 🔹 Training parameters
     # --------------------------------------------------
     "TRAINING": {
-        "epochs": 20000,
+        "epochs": 20,
         "learning_rate": 5e-4,
+
         "loss_weights": {
-            "pde": 10.0,         # Weight for PDE residual
-            "bc": 1.0,           # Weight for boundary conditions
-            "interface": 0.01,   # Weight for imperfect interface
-            "far": 0.01          # Weight for far-field decay
+            "pde": 10.0,
+            "air": 1.0,
+           "bc": 1.0,
+         "interface": 10.0,
+         "normalization": 10.0
         }
     },
 
     # --------------------------------------------------
-    # PINN normalization / reference
+    # 🔹 PINN setup
     # --------------------------------------------------
-    "REFERENCE": {
-        "beta_l": None,           # Can compute from mu_0/rho_0 for layer
-        "beta_h": None            # Can compute from mu_0/rho_0 for substrate
+    "PINN": {
+        "input_dim": 1,
+        "output_dim": 4,   # [U_r, U_i, Phi_r, Phi_i]
+        "hidden_layers": 3,
+        "neurons": 64,
+        "activation": "tanh"
+    },
+    
+    # --------------------------------------------------
+    # 🔹 Initial guess for phase velocity
+    # --------------------------------------------------
+    "INITIAL": {
+        "c0": 1000.0   # Initial guess for phase velocity
     }
-
 }
