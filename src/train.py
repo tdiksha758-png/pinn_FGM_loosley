@@ -1,26 +1,37 @@
 import torch
 import torch.optim as optim
-from networks import get_all_networks
-from config import CONFIG
-from sampling import (
+
+from .networks import get_all_networks
+from .config import CONFIG
+
+from .sampling import (
     sample_domain_points,
     sample_top_surface,
     sample_interface,
     sample_far_field
 )
-from losses import total_loss
 
+from .losses import total_loss
+
+
+# ==================================================
+# DEVICE
+# ==================================================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 # ==================================================
-# Train for a single wavenumber k
+# TRAIN FOR SINGLE WAVENUMBER
 # ==================================================
 def train_for_single_k(
     k,
     model_layer,
     model_half,
     c,
+    params_L,
+    params_H,
+    geom,
+    loss_history_all,
     n_epochs=5000,
     n_domain=5000,
     n_bc=1000,
@@ -28,207 +39,329 @@ def train_for_single_k(
     n_far=1000,
     lr=1e-3
 ):
-    """
-    Train PINN for a fixed wave number k (Love-wave / SH mode)
-    Returns learned phase velocity c
-    """
 
-    print(f"\nTraining for k = {k:.3f} on {DEVICE}")
+    print(f"\nTraining for k = {k:.6f} on {DEVICE}")
 
     # --------------------------------------------------
-    # Load parameters
+    # Interface stiffness
     # --------------------------------------------------
-    params_layer = CONFIG["LAYER"]
-    params_half  = CONFIG["SUBSTRATE"]
-    geom         = CONFIG["GEOMETRY"]
+    h1 = geom["h1"]
 
-    # Convert parameters to tensors
-    params_layer = {
-        key: torch.tensor(val, device=DEVICE, dtype=torch.float32)
-        if isinstance(val, (int, float)) else val
-        for key, val in params_layer.items()
-    }
+    kappa = params_L["c44_star"] / h1
 
-    params_half = {
-        key: torch.tensor(val, device=DEVICE, dtype=torch.float32)
-        if isinstance(val, (int, float)) else val
-        for key, val in params_half.items()
-    }
-
-    # Compute layer and half-space shear velocities
-    c_shear_layer = torch.sqrt(params_layer["mu_0"] / params_layer["rho_0"])
-    c_shear_half  = torch.sqrt(params_half["mu_0"] / params_half["rho_0"])
 
     # --------------------------------------------------
-    # Optimizer (model + eigenvalue)
+    # OPTIMIZER
     # --------------------------------------------------
     optimizer = optim.Adam(
         [
-            {"params": model_layer.parameters(), "lr": lr},
-            {"params": model_half.parameters(), "lr": lr},
-            {"params": [c], "lr": 1e-4},  # eigenvalue learns slowly
+            {
+                "params": model_layer.parameters(),
+                "lr": lr
+            },
+
+            {
+                "params": model_half.parameters(),
+                "lr": lr
+            },
+
+            {
+                "params": [c],
+                "lr": 1e-4
+            }
         ]
     )
 
+
+    # --------------------------------------------------
+    # TRACK BEST SOLUTION
+    # --------------------------------------------------
     best_loss = float("inf")
+
     best_c = c.item()
 
+    k_val = float(k)
+
+
     # --------------------------------------------------
-    # Training loop
+    # INITIALIZE LOSS STORAGE
     # --------------------------------------------------
+    if k_val not in loss_history_all:
+
+        loss_history_all[k_val] = {
+
+            "total": [],
+
+            "pde": [],
+
+            "air": [],
+
+            "bc": [],
+
+            "interface": [],
+
+            "far": [],
+
+            "amp": []
+        }
+
+
+    # ==================================================
+    # TRAINING LOOP
+    # ==================================================
     for epoch in range(1, n_epochs + 1):
 
-        # ---- Sample collocation points ----
-        z_layer, z_half = sample_domain_points(n_domain, geom)
-        z_top  = sample_top_surface(n_bc, geom)
-        z_int  = sample_interface(n_int)
-        z_far  = sample_far_field(n_far, geom)
+        # --------------------------------------------------
+        # SAMPLE POINTS
+        # --------------------------------------------------
+        z_layer, z_half = sample_domain_points(
+            n_domain,
+            geom
+        )
 
-        # Ensure tensors
-        for name in ["z_layer", "z_half", "z_top", "z_int", "z_far"]:
-            arr = locals()[name]
-            if not isinstance(arr, torch.Tensor):
-                arr = torch.tensor(arr, dtype=torch.float32, device=DEVICE)
-            if arr.ndim == 1:
-                arr = arr.unsqueeze(1)
-            locals()[name] = arr
+        z_top = sample_top_surface(
+            n_bc,
+            geom
+        )
 
+        z_int = sample_interface(
+            n_int
+        )
+
+        z_far = sample_far_field(
+            n_far,
+            geom
+        )
+
+
+        # --------------------------------------------------
+        # ZERO GRAD
+        # --------------------------------------------------
         optimizer.zero_grad()
 
-        # ---- Total PINN loss (includes PDE, BCs, interface, far-field, amplitude) ----
+
+        # --------------------------------------------------
+        # TOTAL LOSS
+        # --------------------------------------------------
         loss, logs = total_loss(
+
             model_layer,
             model_half,
+
             z_layer,
             z_half,
+
             z_top,
             z_int,
             z_far,
-            params_layer,
-            params_half,
+
+            params_L,
+            params_H,
+
             k,
             c,
-            w_pde=1.0,
-            w_bc=10.0,
-            w_int=50.0,  # interface weight
-            w_far=5.0,
-            w_amp=100.0  # amplitude fixing at top
+
+            kappa
         )
 
+
         # --------------------------------------------------
-        # Love-wave physics penalty
+        # STORE LOSSES
         # --------------------------------------------------
-        physics_penalty = (
-            1000.0 * torch.relu(c_shear_layer - c)**2 +
-            1000.0 * torch.relu(c - c_shear_half)**2
+        loss_history_all[k_val]["total"].append(
+            loss.item()
         )
 
-        total_loss_val = loss + physics_penalty
-        total_loss_val.backward()
+        loss_history_all[k_val]["pde"].append(
+            logs["pde"]
+        )
 
-        # Gradient clipping
+        loss_history_all[k_val]["air"].append(
+            logs["air"]
+        )
+
+        loss_history_all[k_val]["bc"].append(
+            logs["bc_top"]
+        )
+
+        loss_history_all[k_val]["interface"].append(
+            logs["interface"]
+        )
+
+        loss_history_all[k_val]["far"].append(
+            logs["far"]
+        )
+
+        loss_history_all[k_val]["amp"].append(
+            logs["amp"]
+        )
+
+
+        # --------------------------------------------------
+        # BACKPROPAGATION
+        # --------------------------------------------------
+        loss.backward()
+
+
+        # --------------------------------------------------
+        # GRADIENT CLIPPING
+        # --------------------------------------------------
         torch.nn.utils.clip_grad_norm_(
-            list(model_layer.parameters()) + list(model_half.parameters()),
+            list(model_layer.parameters())
+            + list(model_half.parameters()),
             max_norm=1.0
         )
 
+
+        # --------------------------------------------------
+        # OPTIMIZER STEP
+        # --------------------------------------------------
         optimizer.step()
 
-        # Hard clamp for eigenvalue c
-        with torch.no_grad():
-            c.data.clamp_(c_shear_layer * 1.001, c_shear_half * 0.999)
 
-        # Track best
-        if total_loss_val.item() < best_loss:
-            best_loss = total_loss_val.item()
+        # --------------------------------------------------
+        # SAVE BEST c
+        # --------------------------------------------------
+        if loss.item() < best_loss:
+
+            best_loss = loss.item()
+
             best_c = c.item()
 
-        # Logging
+
+        # --------------------------------------------------
+        # PRINT
+        # --------------------------------------------------
         if epoch % 500 == 0:
+
             print(
                 f"Epoch {epoch:6d} | "
                 f"Loss = {loss.item():.3e} | "
-                f"Phys = {physics_penalty.item():.2e} | "
-                f"c = {c.item():.6f} | "
-                f"PDE = {logs.get('pde', 0):.2e} | "
-                f"BC = {logs.get('bc_top', 0):.2e} | "
-                f"INT = {logs.get('interface', 0):.2e} | "
-                f"FAR = {logs.get('far', 0):.2e} | "
-                f"AMP = {logs.get('amp',0):.2e}"
+                f"c = {c.item():.6f}"
             )
+
 
     return best_c
 
 
 # ==================================================
-# Dispersion sweep over k
-# ==================================================
-def train_dispersion():
-    geom = CONFIG["GEOMETRY"]
-
-    k_vals = torch.linspace(
-        geom["k_min"],
-        geom["k_max"],
-        geom["num_k"]
-    )
-
-    # Initialize networks ONCE
-    model_layer, model_half = get_all_networks()
-    model_layer.to(DEVICE)
-    model_half.to(DEVICE)
-
-    # Initialize eigenvalue c
-    params_layer = CONFIG["LAYER"]
-    params_half  = CONFIG["HALFSPACE"]
-
-    c_shear_layer = (params_layer["mu44_0"] / params_layer["rho_0"]) ** 0.5
-    c_shear_half  = (params_half["mu44_0"] / params_half["rho_0"]) ** 0.5
-
-    c = torch.nn.Parameter(
-        torch.tensor(0.5*(c_shear_layer + c_shear_half),
-                     device=DEVICE,
-                     dtype=torch.float32)
-    )
-
-    dispersion = []
-
-    for idx, k in enumerate(k_vals):
-        print(f"\n{'='*50}\nTraining for k = {k.item():.3f} ({idx+1}/{len(k_vals)})\n{'='*50}")
-        c_val = train_for_single_k(
-            k.item(),
-            model_layer,
-            model_half,
-            c,
-            n_epochs=5000 if idx == 0 else 2500
-        )
-        dispersion.append([k.item(), c_val])
-
-    return dispersion
-
-
-# ==================================================
-# Main execution
+# MAIN
 # ==================================================
 if __name__ == "__main__":
-    print("\nRunning Love-wave PINN solver...\n")
 
+    print("\nRunning PINN solver...\n")
+
+
+    # ==================================================
+    # LOAD PARAMETERS
+    # ==================================================
+    params_L = {
+
+        k_: torch.tensor(
+            v,
+            device=DEVICE,
+            dtype=torch.float32
+        )
+
+        for k_, v in CONFIG["LAYER"].items()
+    }
+
+
+    params_H = {
+
+        k_: torch.tensor(
+            v,
+            device=DEVICE,
+            dtype=torch.float32
+        )
+
+        for k_, v in CONFIG["HALFSPACE"].items()
+    }
+
+
+    geom = CONFIG["GEOMETRY"]
+
+
+    # ==================================================
+    # BUILD NETWORKS
+    # ==================================================
     model_layer, model_half = get_all_networks()
+
     model_layer.to(DEVICE)
+
     model_half.to(DEVICE)
 
-    params_layer = CONFIG["LAYER"]
-    params_half  = CONFIG["HALFSPACE"]
 
-    c_init = 0.5 * ((params_layer["mu44_0"]/params_layer["rho_0"])**0.5 +
-                    (params_half["mu44_0"]/params_half["rho_0"])**0.5)
+    # ==================================================
+    # INITIAL PHASE VELOCITY
+    # ==================================================
+    c = torch.nn.Parameter(
 
-    c = torch.nn.Parameter(torch.tensor(c_init, device=DEVICE, dtype=torch.float32))
+        torch.sqrt(
+            params_L["c44_star"]
+            /
+            params_L["rho"]
+        )
+    )
 
-    test_k = 0.6
-    test_c = train_for_single_k(test_k, model_layer, model_half, c,
-                                n_epochs=1500, n_domain=200, n_bc=50, n_int=50, n_far=50, lr=1e-3)
-    print(f"\n✓ Test result: c({test_k}) = {test_c:.6f}")
 
-    # Full dispersion sweep (uncomment when ready)
-    # dispersion = train_dispersion()
-    # torch.save(dispersion, "dispersion_curve.pt")
+    # ==================================================
+    # LOSS STORAGE
+    # ==================================================
+    loss_history_all = {}
+
+
+    # ==================================================
+    # TEST WAVENUMBER
+    # ==================================================
+    test_k = 0.1
+
+
+    # ==================================================
+    # TRAIN
+    # ==================================================
+    c_val = train_for_single_k(
+
+        test_k,
+
+        model_layer,
+        model_half,
+
+        c,
+
+        params_L,
+        params_H,
+
+        geom,
+
+        loss_history_all,
+
+        n_epochs=1500,
+
+        n_domain=500,
+
+        n_bc=100,
+
+        n_int=100,
+
+        n_far=100
+    )
+
+
+    # ==================================================
+    # RESULTS
+    # ==================================================
+    print(f"\n✓ Test result:")
+
+    print(f"c({test_k}) = {c_val:.6f}")
+
+
+    # ==================================================
+    # VERIFY LOSS STORAGE
+    # ==================================================
+    k0 = list(loss_history_all.keys())[0]
+
+    print(
+        "\nStored epochs:",
+        len(loss_history_all[k0]["total"])
+    )

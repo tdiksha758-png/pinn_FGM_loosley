@@ -1,70 +1,106 @@
-"""
-Configuration file for SH-wave dispersion in a functionally graded
-layered medium using PINNs
-"""
-
 CONFIG = {
 
     # --------------------------------------------------
-    # Functionally Graded Layer (Linear variation)
+    # LAYER (Region 1)
     # --------------------------------------------------
     "LAYER": {
-        "mu_0": 0.3e11,         # Shear modulus at reference (Pa)
-        "rho_0": 7500.0,          # Density (kg/m^3)
-        "P_0": 1e7,               # Initial stress along x1 (Pa)
-        "alpha": 0.2,             # Grading parameter along thickness
-        "s": 100.0,               # Raw stiffness of imperfect interface
-        "L": 2.0,                 # Layer thickness
+
+        "c44_star": 7.511e9,
+        "c44_dash": 9.7252e9,
+
+        "e15_star": -0.0919,
+        "e15_dash": -0.000285,
+
+        "a11_star": -0.3041e-9,
+        "a11_dash": -0.02e-12,
+
+        "rho": 3949.0,
+
+        "sigma": 1e11,
+
+        "s": 10.0,
+
+        "h1": 20.0
     },
 
+
     # --------------------------------------------------
-    # Functionally Graded Substrate (Quadratic variation)
+    # HALF-SPACE (Region 2)
     # --------------------------------------------------
-    "SUBSTRATE": {
-        "mu_0": 0.28e11,          # Shear modulus at reference (Pa)
-        "rho_0": 2800.0,          # Density (kg/m^3)
-        "P_0": 1e7,               # Initial stress along x1 (Pa)
-        "alpha": 0.9,             # Quadratic grading parameter
+    "HALFSPACE": {
+
+        "c44_star": 8.172e9,
+        "c44_dash": 32.239e9,
+
+        "e15_star": -0.0968,
+        "e15_dash": -0.0003,
+
+        "a11_star": -0.4187e-9,
+        "a11_dash": -2.55e-12,
+
+        "rho": 3259.0,
+
+        "sigma": 1e11
     },
 
-    
+
     # --------------------------------------------------
-    # Geometry
+    # AIR / VACUUM REGION
+    # --------------------------------------------------
+    "AIR": {
+
+        # Vacuum permittivity
+        "eps0": 8.854e-12
+    },
+
+
+    # --------------------------------------------------
+    # GEOMETRY
     # --------------------------------------------------
     "GEOMETRY": {
-        "L": 2.0,                 # Layer thickness
-        "H_trunc": 30.0,          # Truncated depth for substrate
+
+        "h1": 20.0,
+
+        "H_trunc": 50.0
     },
 
-    # --------------------------------------------------
-    # Wavenumber sweep (non-dimensional)
-    # --------------------------------------------------
-    "WAVENUMBER": {
-        "k_min": 0.052,
-        "k_max": 0.25,
-        "num_k": 16
-    },
 
     # --------------------------------------------------
-    # Training parameters
+    # WAVE PARAMETERS
+    # --------------------------------------------------
+    "WAVE": {
+
+        "k_min": 0.001275,
+
+        "k_max": 0.006,
+
+        "num_k": 7,
+
+        "c_init": 2000.0
+    },
+
+
+    # --------------------------------------------------
+    # TRAINING
     # --------------------------------------------------
     "TRAINING": {
-        "epochs": 20000,
+
+        "epochs": 10000,
+
         "learning_rate": 5e-4,
+
         "loss_weights": {
-            "pde": 10.0,         # Weight for PDE residual
-            "bc": 1.0,           # Weight for boundary conditions
-            "interface": 0.01,   # Weight for imperfect interface
-            "far": 0.01          # Weight for far-field decay
+
+            "pde": 10.0,
+
+            "bc": 1.0,
+
+            "boundary": 10.0,
+
+            "far": 0.1,
+
+            # Air/vacuum PDE loss
+            "air": 1.0
         }
-    },
-
-    # --------------------------------------------------
-    # PINN normalization / reference
-    # --------------------------------------------------
-    "REFERENCE": {
-        "beta_l": None,           # Can compute from mu_0/rho_0 for layer
-        "beta_h": None            # Can compute from mu_0/rho_0 for substrate
     }
-
 }

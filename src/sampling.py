@@ -11,75 +11,81 @@ def sample_uniform(n, low, high):
         n, 1, device=DEVICE, dtype=torch.float32
     )
 
+
 # --------------------------------------------------
 # Domain sampling
 # --------------------------------------------------
 def sample_domain_points(n_domain, geom):
     """
     Returns:
-        z_layer   : points in layer domain [-H, 0] (non-dimensional)
-        z_half    : points in half-space [0, L] (non-dimensional)
+        z_layer : points in layer [-h1, 0]
+        z_half  : points in half-space [0, H_trunc]
     """
 
-    H = geom.get("H", 1.0)
-    L = geom.get("L", 29.0)
+    h1 = geom.get("h1", 2.0)
+    H  = geom.get("H_trunc", 30.0)
 
-    # Layer: z ∈ [-H, 0]
-    z_layer = sample_uniform(n_domain, -H, 0.0)
+    # Layer: z ∈ [-h1, 0]
+    z_layer = sample_uniform(n_domain, -h1, 0.0)
 
-    # Half-space: z ∈ [0, L]
-    z_half = sample_uniform(n_domain, 0.0, L)
+    # Half-space: z ∈ [0, H]
+    z_half = sample_uniform(n_domain, 0.0, H)
 
-    return (
-        z_layer.to(DEVICE),
-        z_half.to(DEVICE),
-    )
+    return z_layer.to(DEVICE), z_half.to(DEVICE)
 
 
 # --------------------------------------------------
-# Top surface boundary (z = -H)
+# Top surface (z = -h1)
 # --------------------------------------------------
 def sample_top_surface(n_boundary, geom):
     """
-    Top free surface at z = -H (non-dimensional)
+    Top free surface at z = -h1
     """
 
-    H = geom.get("H", 6.0)
+    h1 = geom.get("h1", 20.0)
 
     z_top = torch.full(
         (n_boundary, 1),
-        -float(H),                # force float value
-        dtype=torch.float32,      # force float dtype
+        -float(h1),
+        dtype=torch.float32,
         device=DEVICE
     )
 
     return z_top
 
 
-
 # --------------------------------------------------
-# Interface boundary (z = 0)
+# Boundary (z = 0)
 # --------------------------------------------------
-def sample_interface(n_interface):
+def sample_boundary(n_boundary):
     """
-    Interface between layer and half-space at z = 0 (non-dimensional)
+    Boundary between layer and half-space
     """
 
-    z_int = torch.zeros((n_interface, 1))
+    z_int = torch.zeros(
+        (n_boundary, 1),
+        dtype=torch.float32,
+        device=DEVICE
+    )
 
-    return z_int.to(DEVICE)
+    return z_int
 
 
 # --------------------------------------------------
-# Far-field boundary (z = L)
+# Far-field (z = H_trunc)
 # --------------------------------------------------
 def sample_far_field(n_far, geom):
     """
-    Far-field boundary for half-space at z = L (non-dimensional)
+    Far-field boundary for half-space
     """
 
-    L = geom.get("L", 29.0*6)
+    H = geom.get("H_trunc", 30.0)
 
-    z_far = torch.full((n_far, 1), L)
+    z_far = torch.full(
+        (n_far, 1),
+        float(H),
+        dtype=torch.float32,
+        device=DEVICE
+    )
 
-    return z_far.to(DEVICE)
+    return z_far

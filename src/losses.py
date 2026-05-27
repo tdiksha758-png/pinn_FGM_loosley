@@ -1,121 +1,387 @@
 import torch
 import torch.nn as nn
-from .pde_residual import residual_layer_FGM, residual_halfspace_FGM
-from .boundary_conditions import top_surface_bc, halfspace_far_field_bc, imperfect_interface_bc
+
+from .pde_residual import (
+    pde_residual,
+    air_pde_residual
+)
+
+from .boundary_conditions import (
+    top_bc,
+    interface_bc,
+    far_bc
+)
 
 mse = nn.MSELoss()
 
-# --------------------------------------------------
-# PDE loss
-# --------------------------------------------------
-def compute_pde_loss(model_layer, model_half, z_layer, z_half, params_layer, params_half, k, c):
-    """
-    PDE residual loss for layer and half-space
-    """
 
-    # Residuals (real displacement only)
-    rL = residual_layer_FGM(model_layer, z_layer, k, c, params_layer)
-    rH = residual_halfspace_FGM(model_half, z_half, k, c, params_half)
+# ==================================================
+# PDE LOSS
+# ==================================================
+def compute_pde_loss(
+    model_air,
+    model_layer,
+    model_half,
+    z_air,
+    z_layer,
+    z_half,
+    params_air,
+    params_L,
+    params_H,
+    k,
+    c
+):
 
-    loss_pde = mse(rL, torch.zeros_like(rL)) + mse(rH, torch.zeros_like(rH))
-    return loss_pde
+    # ==================================================
+    # LAYER PDE
+    # ==================================================
+    (
+        R1_r_L,
+        R1_i_L,
+        R2_r_L,
+        R2_i_L
+
+    ) = pde_residual(
+
+        model_layer,
+
+        z_layer,
+
+        k,
+        c,
+
+        params_L
+    )
+
+    # ==================================================
+    # HALF-SPACE PDE
+    # ==================================================
+    (
+        R1_r_H,
+        R1_i_H,
+        R2_r_H,
+        R2_i_H
+
+    ) = pde_residual(
+
+        model_half,
+
+        z_half,
+
+        k,
+        c,
+
+        params_H
+    )
+
+    # ==================================================
+    # AIR / VACUUM PDE
+    # ==================================================
+    (
+        R_air_r,
+        R_air_i
+
+    ) = air_pde_residual(
+
+        model_air,
+
+        z_air,
+
+        k,
+        c,
+
+        params_air
+    )
+
+    # ==================================================
+    # LAYER PDE LOSS
+    # ==================================================
+    loss_L = (
+
+        mse(R1_r_L, torch.zeros_like(R1_r_L))
+
+        +
+
+        mse(R1_i_L, torch.zeros_like(R1_i_L))
+
+        +
+
+        mse(R2_r_L, torch.zeros_like(R2_r_L))
+
+        +
+
+        mse(R2_i_L, torch.zeros_like(R2_i_L))
+    )
+
+    # ==================================================
+    # HALF-SPACE PDE LOSS
+    # ==================================================
+    loss_H = (
+
+        mse(R1_r_H, torch.zeros_like(R1_r_H))
+
+        +
+
+        mse(R1_i_H, torch.zeros_like(R1_i_H))
+
+        +
+
+        mse(R2_r_H, torch.zeros_like(R2_r_H))
+
+        +
+
+        mse(R2_i_H, torch.zeros_like(R2_i_H))
+    )
+
+    # ==================================================
+    # AIR PDE LOSS
+    # ==================================================
+    loss_air = (
+
+        mse(R_air_r, torch.zeros_like(R_air_r))
+
+        +
+
+        mse(R_air_i, torch.zeros_like(R_air_i))
+    )
+
+    # ==================================================
+    # RETURN
+    # ==================================================
+    return (
+
+        loss_L + loss_H,
+
+        loss_air
+    )
 
 
-# --------------------------------------------------
-# Top surface boundary loss
-# --------------------------------------------------
-def compute_top_surface_loss(model_layer, z_top, params_layer):
-    """
-    Stress-free top surface: tau_23 = 0
-    """
-    tau = top_surface_bc(model_layer, z_top, params_layer)
-    loss_bc = mse(tau, torch.zeros_like(tau))
+# ==================================================
+# TOP SURFACE BC LOSS
+# ==================================================
+def compute_top_surface_loss(
+    model_air,
+    model_layer,
+    z_air,
+    z_top,
+    params_L,
+    k,
+    c
+):
+
+    loss_bc = top_bc(
+
+        model_air,
+
+        model_layer,
+
+        z_air,
+
+        z_top,
+
+        params_L,
+
+        k,
+        c
+    )
+
     return loss_bc
 
 
-
-# --------------------------------------------------
-# Interface loss (layer ↔ half-space)
-# --------------------------------------------------
+# ==================================================
+# INTERFACE LOSS
+# ==================================================
 def compute_interface_loss(
     model_layer,
     model_half,
     z_int,
-    params_layer,
-    params_half,
-    w_disp=1.0,
-    w_stress=1.0
+    params_L,
+    params_H,
+    k,
+    c,
+    kappa
 ):
-    """
-    Interface loss using imperfect interface BC
-    """
 
-    # Get residuals from BC
-    res_interface, res_stress = imperfect_interface_bc(
-        model_layer, model_half, z_int, params_layer, params_half
+    loss_int = interface_bc(
+
+        model_layer,
+
+        model_half,
+
+        z_int,
+
+        params_L,
+
+        params_H,
+
+        k,
+        c,
+
+        kappa
     )
 
-    # Loss terms
-    loss_disp = mse(res_interface, torch.zeros_like(res_interface))
-    loss_stress = mse(res_stress, torch.zeros_like(res_stress))
+    return loss_int
 
-    # Total interface loss
-    return w_disp * loss_disp + w_stress * loss_stress
 
-# --------------------------------------------------
-# Far-field loss
-# --------------------------------------------------
-def compute_far_field_loss(model_half, z_far):
-    """
-    Half-space decay condition: V -> 0
-    """
-    V = halfspace_far_field_bc(model_half, z_far)
-    loss_far = mse(V, torch.zeros_like(V))
+# ==================================================
+# FAR FIELD LOSS
+# ==================================================
+def compute_far_field_loss(
+    model_half,
+    z_far
+):
+
+    loss_far = far_bc(
+
+        model_half,
+
+        z_far
+    )
+
     return loss_far
 
 
-# --------------------------------------------------
-# Total loss
-# --------------------------------------------------
+# ==================================================
+# TOTAL LOSS
+# ==================================================
 def total_loss(
+    model_air,
     model_layer,
     model_half,
+    z_air,
     z_layer,
     z_half,
     z_top,
     z_int,
     z_far,
-    params_layer,
-    params_half,
+    params_air,
+    params_L,
+    params_H,
     k,
     c,
-    w_pde = 10.0,
-    w_bc  = 1.0,
-    w_int = 10,
-    w_far = 0.1,
-    w_amp = 100
+    kappa,
+    w_pde=10.0,
+    w_air=1.0,
+    w_bc=1.0,
+    w_int=10.0,
+    w_far=0.1,
 ):
-    """
-    Total PINN loss for SH-wave dispersion analysis
-    """
-    # Amplitude fixing at top surface
-    pred_top = model_layer(z_top)
-    V_top = pred_top
-    amp_loss = mse(V_top, torch.ones_like(V_top))
 
-    # Compute all losses
-    loss_pde = compute_pde_loss(model_layer, model_half, z_layer, z_half, params_layer, params_half, k, c)
-    loss_bc  = compute_top_surface_loss(model_layer, z_top, params_layer)
-    loss_int = compute_interface_loss(model_layer, model_half, z_int, params_layer, params_half)
-    loss_far = compute_far_field_loss(model_half, z_far)
+    # ==================================================
+    # PDE LOSS
+    # ==================================================
+    loss_pde, loss_air = compute_pde_loss(
 
-    # Total weighted loss
-    loss_total = w_pde * loss_pde + w_bc * loss_bc + w_int * loss_int + w_far * loss_far + w_amp * amp_loss
+        model_air,
 
-    return loss_total, {
+        model_layer,
+
+        model_half,
+
+        z_air,
+
+        z_layer,
+
+        z_half,
+
+        params_air,
+
+        params_L,
+
+        params_H,
+
+        k,
+        c
+    )
+
+    # ==================================================
+    # TOP SURFACE BC
+    # ==================================================
+    loss_bc = compute_top_surface_loss(
+
+        model_air,
+
+        model_layer,
+
+        z_air,
+
+        z_top,
+
+        params_L,
+
+        k,
+        c
+    )
+
+    # ==================================================
+    # INTERFACE LOSS
+    # ==================================================
+    loss_int = compute_interface_loss(
+
+        model_layer,
+
+        model_half,
+
+        z_int,
+
+        params_L,
+
+        params_H,
+
+        k,
+        c,
+
+        kappa
+    )
+
+    # ==================================================
+    # FAR FIELD LOSS
+    # ==================================================
+    loss_far = compute_far_field_loss(
+
+        model_half,
+
+        z_far
+    )
+
+    # ==================================================
+    # TOTAL LOSS
+    # ==================================================
+    loss_total = (
+
+        w_pde * loss_pde
+
+        +
+
+        w_air * loss_air
+
+        +
+
+        w_bc * loss_bc
+
+        +
+
+        w_int * loss_int
+
+        +
+
+        w_far * loss_far
+    )
+
+    # ==================================================
+    # LOGGING
+    # ==================================================
+    logs = {
+
         "pde": loss_pde.item(),
+
+        "air": loss_air.item(),
+
         "bc_top": loss_bc.item(),
+
         "interface": loss_int.item(),
-        "far": loss_far.item(),
-        "amp": amp_loss.item()
+
+        "far": loss_far.item()
     }
+
+    return loss_total, logs

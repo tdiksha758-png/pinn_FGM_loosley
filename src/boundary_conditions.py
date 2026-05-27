@@ -1,106 +1,370 @@
 import torch
 from .utils import gradients
 
-# --------------------------------------------------
-# Top surface boundary condition (z = -H_layer)
-# Stress-free: tau_23 = 0
-# --------------------------------------------------
-def top_surface_bc(model_layer, z_top, material_params):
-    """
-    Stress-free top surface:
-    tau_23 = mu44 * dV/dz = 0
-    Single real field
-    """
 
-    z_top = z_top.clone().detach().requires_grad_(True)
+# ==================================================
+# COMPUTE τ23 AND D3
+# ==================================================
+def compute_fields(model, z, params, k, c):
 
-    V = model_layer(z_top)
-    V_z = gradients(V, z_top)
+    z = z.clone().detach().requires_grad_(True)
 
-    # Linear FGM: mu44 = mu44_0 * (1 + alpha1 * z)
-    mu44_0 = material_params["mu_0"]
-    alpha1 = material_params["alpha"]
-    P1 = material_params.get("P_0", 0.0)
+    out = model(z)
 
-    mu44 = mu44_0 * (1 + alpha1 * z_top)
-    tau =  V_z 
-    return tau
+    # ==================================================
+    # OUTPUTS
+    # ==================================================
+    # [U_r, U_i, Psi_r, Psi_i]
+    # ==================================================
+
+    U_r = out[:, 0:1]
+    U_i = out[:, 1:2]
+
+    Psi_r = out[:, 2:3]
+    Psi_i = out[:, 3:4]
+
+    # ==================================================
+    # DERIVATIVES
+    # ==================================================
+
+    U_r_z = gradients(U_r, z)
+    U_i_z = gradients(U_i, z)
+
+    Psi_r_z = gradients(Psi_r, z)
+    Psi_i_z = gradients(Psi_i, z)
+
+    # ==================================================
+    # FREQUENCY
+    # ==================================================
+
+    omega = k * c
+
+    # ==================================================
+    # MATERIAL PARAMETERS
+    # ==================================================
+
+    c44_r = params["c44_star"]
+    c44_i = -omega * params["c44_dash"]
+
+    e15_r = params["e15_star"]
+    e15_i = -omega * params["e15_dash"]
+
+    a11_r = params["a11_star"]
+    a11_i = -omega * params["a11_dash"]
+
+    # ==================================================
+    # τ23
+    # ==================================================
+
+    tau_r = (
+
+        (c44_r * U_r_z
+        - c44_i * U_i_z
+
+        + e15_r * Psi_r_z
+        - e15_i * Psi_i_z)/c44_r
+
+    )
+
+    tau_i = (
+
+        (c44_r * U_i_z
+        + c44_i * U_r_z
+
+        + e15_r * Psi_i_z
+        + e15_i * Psi_r_z)/c44_r
+
+    )
+
+    # ==================================================
+    # D3
+    # ==================================================
+
+    D3_r = (
+
+        (e15_r * U_r_z
+        - e15_i * U_i_z
+
+        - (
+            a11_r * Psi_r_z
+            - a11_i * Psi_i_z
+        ))/e15_r
+    )
+
+    D3_i = (
+
+        (e15_r * U_i_z
+        + e15_i * U_r_z
+
+        - (
+            a11_r * Psi_i_z
+            + a11_i * Psi_r_z
+        ))/e15_r
+        
+    )
+
+    return (
+
+        tau_r,
+        tau_i,
+
+        D3_r,
+        D3_i,
+
+        U_r,
+        U_i,
+
+        Psi_r,
+        Psi_i
+    )
 
 
-# # --------------------------------------------------
-# # Interface between layer and half-space (z = 0)
-# # --------------------------------------------------
-# def interface_layer_halfspace(model_layer, model_half, z_int,
-#                               params_layer, params_half):
-#     """
-#     Interface conditions:
-#     - Displacement continuity: V_layer = V_half
-#     - Stress continuity: mu44_layer * dV_layer/dz = mu44_half * dV_half/dz
-#     """
+# ==================================================
+# TOP SURFACE BC
+#
+# τ23 = 0
+# ψ = ψ_air
+# D3 = D_air
+# ==================================================
+def top_bc(
+    model_air,
+    model_layer,
+    z_air,
+    z_top,
+    params_layer,
+    k,
+    c
+):
 
-#     z_int = z_int.clone().detach().requires_grad_(True)
+    # ==================================================
+    # AIR
+    # ==================================================
 
-#     V_layer = model_layer(z_int)
-#     V_half  = model_half(z_int)
+    z_air = z_air.clone().detach().requires_grad_(True)
 
-#     # Derivatives
-#     V_layer_z = gradients(V_layer, z_int)
-#     V_half_z  = gradients(V_half, z_int)
+    out_air = model_air(z_air)
 
-#     # Graded shear moduli
-#     mu44_l0 = params_layer["mu_0"]
-#     alpha1 = params_layer["alpha"]
-#     P1 = params_layer.get("P_0", 0.0)
-#     mu44_l = mu44_l0 * (1 + alpha1 * z_int)
+    Psi_air_r = out_air[:, 0:1]
+    Psi_air_i = out_air[:, 1:2]
 
-#     mu44_h0 = params_half["mu_0"]
-#     alpha2 = params_half["alpha"]
-#     P2 = params_half.get("P_0", 0.0)
-#     mu44_h = mu44_h0 * (1 + alpha2 * z_int)**2
+    Psi_air_r_z = gradients(Psi_air_r, z_air)
+    Psi_air_i_z = gradients(Psi_air_i, z_air)
 
-#     # Residuals: displacement and stress continuity
-#     res_disp = V_layer - V_half
-#     res_stress = (mu44_l * V_layer_z  - (mu44_h * V_half_z)) / mu44_l0
+    eps0 = 8.854e-12
 
-#     return  res_stress
+    D_air_r = -eps0 * Psi_air_r_z
+    D_air_i = -eps0 * Psi_air_i_z
 
-def imperfect_interface_bc(model_layer, model_half, z_int, params_layer, params_half):
-    """
-    Imperfect interface condition:
-    tau_23 = K * (V_half - V_layer)
-    """
+    # ==================================================
+    # SOLID
+    # ==================================================
 
-     
-    z_int = z_int.clone().detach().requires_grad_(True)
+    (
+        tau_r,
+        tau_i,
 
-    V_layer = model_layer(z_int)
-    V_half  = model_half(z_int)
+        D3_r,
+        D3_i,
 
-    # Derivatives for shear stress
-    V_layer_z = gradients(V_layer, z_int)
-    V_half_z  = gradients(V_half, z_int)
-    
-    # Shear moduli
-    mu44_l = params_layer["mu_0"] * (1 + params_layer["alpha"] * z_int)
-    mu44_h = params_half["mu_0"] * (1 + params_half["alpha"] * z_int)**2
-    K= params_layer["mu_0"]/(params_layer["s"]*params_layer["L"]);
-    mu44_l0=params_layer["mu_0"]
-    # Interfacial stiffness
-    # K = params_layer.get("K", 1e3)
+        _,
+        _,
 
-    # Residual: tau_23 - K*(V_half - V_layer)
-    res_interface =((mu44_l * V_layer_z) - K * (V_half - V_layer))/mu44_l
-    res_stress = (mu44_l * V_layer_z  - (mu44_h * V_half_z)) / mu44_l0
+        Psi_r,
+        Psi_i
 
-    return res_interface, res_stress
-# --------------------------------------------------
-# Far-field boundary condition (z -> infinity)
-# --------------------------------------------------
-def halfspace_far_field_bc(model_half, z_far):
-    """
-    Half-space decay condition: V -> 0 as z -> infinity
-    """
-    z_far = z_far.clone().detach().requires_grad_(True)
-    V_far = model_half(z_far)
+    ) = compute_fields(
+        model_layer,
+        z_top,
+        params_layer,
+        k,
+        c
+    )
 
-    return V_far
+    # ==================================================
+    # τ23 = 0
+    # ==================================================
+
+    res_tau = tau_r**2 + tau_i**2
+
+    # ==================================================
+    # D3 = D_air
+    # ==================================================
+
+    res_D = (
+
+        (D3_r - D_air_r)**2
+
+        +
+
+        (D3_i - D_air_i)**2
+    )
+
+    # ==================================================
+    # ψ = ψ_air
+    # ==================================================
+
+    res_psi = (
+
+        (Psi_r - Psi_air_r)**2
+
+        +
+
+        (Psi_i - Psi_air_i)**2
+    )
+
+    return torch.mean(
+
+        res_tau
+
+        +
+
+        res_D
+
+        +
+
+        res_psi
+    )
+
+
+# ==================================================
+# INTERFACE CONDITIONS
+# ==================================================
+def interface_bc(
+    model_layer,
+    model_half,
+    z_int,
+    params_L,
+    params_H,
+    k,
+    c,
+    kappa
+):
+
+    # ==================================================
+    # LAYER
+    # ==================================================
+
+    (
+        tau_L_r,
+        tau_L_i,
+
+        D3_L_r,
+        D3_L_i,
+
+        U_L_r,
+        U_L_i,
+
+        Psi_L_r,
+        Psi_L_i
+
+    ) = compute_fields(
+        model_layer,
+        z_int,
+        params_L,
+        k,
+        c
+    )
+
+    # ==================================================
+    # HALF-SPACE
+    # ==================================================
+
+    (
+        tau_H_r,
+        tau_H_i,
+
+        D3_H_r,
+        D3_H_i,
+
+        U_H_r,
+        U_H_i,
+
+        Psi_H_r,
+        Psi_H_i
+
+    ) = compute_fields(
+        model_half,
+        z_int,
+        params_H,
+        k,
+        c
+    )
+
+    # ==================================================
+    # STRESS CONTINUITY
+    # ==================================================
+
+    res_stress = (
+
+        (tau_L_r - tau_H_r)**2
+
+        +
+
+        (tau_L_i - tau_H_i)**2
+    )
+
+    # ==================================================
+    # IMPERFECT INTERFACE
+    # ==================================================
+
+    res_spring = (
+
+        ((tau_H_r / kappa) - (U_H_r - U_L_r))**2
+
+        +
+
+        ((tau_H_i / kappa) - (U_H_i - U_L_i))**2
+    )
+
+    # ==================================================
+    # PSI CONTINUITY
+    # ==================================================
+
+    res_psi = (
+
+        (Psi_L_r - Psi_H_r)**2
+
+        +
+
+        (Psi_L_i - Psi_H_i)**2
+    )
+
+    # ==================================================
+    # D3 CONTINUITY
+    # ==================================================
+
+    res_D3 = (
+
+        (D3_L_r - D3_H_r)**2
+
+        +
+
+        (D3_L_i - D3_H_i)**2
+    )
+
+    return torch.mean(
+
+        res_stress
+
+        +
+
+        res_spring
+
+        +
+
+        res_psi
+
+        +
+
+        res_D3
+    )
+
+
+# ==================================================
+# FAR FIELD
+# ==================================================
+def far_bc(model_half, z_far):
+
+    out = model_half(z_far)
+
+    return torch.mean(out**2)
