@@ -32,7 +32,7 @@ CONFIG = {
     # Geometry
     # --------------------------------------------------
     "GEOMETRY": {
-        "L": 2.0,                 # Layer thickness
+        "L": 1.0,                 # Layer thickness
         "H_trunc": 30.0,          # Truncated depth for substrate
     },
 
