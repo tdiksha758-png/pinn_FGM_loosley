@@ -80,9 +80,9 @@ def compute_pde_loss(
     scale = 1e5
 
     # --------------------------------------------------
-    # SOLID PDE LOSS
+    # COMBINED PDE LOSS (ALL LAYERS)
     # --------------------------------------------------
-    loss_solid = (
+    loss_pde = (
 
         mse(R1r_L1 / scale, torch.zeros_like(R1r_L1)) +
         mse(R1i_L1 / scale, torch.zeros_like(R1i_L1)) +
@@ -92,14 +92,7 @@ def compute_pde_loss(
         mse(R1r_L2 / scale, torch.zeros_like(R1r_L2)) +
         mse(R1i_L2 / scale, torch.zeros_like(R1i_L2)) +
         mse(R2r_L2 / scale, torch.zeros_like(R2r_L2)) +
-        mse(R2i_L2 / scale, torch.zeros_like(R2i_L2))
-
-    )
-
-    # --------------------------------------------------
-    # AIR PDE LOSS
-    # --------------------------------------------------
-    loss_air = (
+        mse(R2i_L2 / scale, torch.zeros_like(R2i_L2)) +
 
         mse(R3r, torch.zeros_like(R3r)) +
         mse(R3i, torch.zeros_like(R3i)) +
@@ -108,7 +101,7 @@ def compute_pde_loss(
 
     )
 
-    return loss_solid, loss_air
+    return loss_pde
 
 
 # ==================================================
@@ -119,11 +112,14 @@ def compute_top_surface_loss(model_L1, x_top, params_L1, k, c):
         model_L1, x_top, params_L1, k, c
     )
 
+    # ✅ Apply same scaling as PDE for magnitude balance
+    scale = 1e5
+    
     loss = (
-        mse(sigma_r, torch.zeros_like(sigma_r)) +
-        mse(sigma_i, torch.zeros_like(sigma_i)) +
-        mse(phi_r, torch.zeros_like(phi_r)) +
-        mse(phi_i, torch.zeros_like(phi_i))
+        mse(sigma_r / scale, torch.zeros_like(sigma_r)) +
+        mse(sigma_i / scale, torch.zeros_like(sigma_i)) +
+        mse(phi_r / scale, torch.zeros_like(phi_r)) +
+        mse(phi_i / scale, torch.zeros_like(phi_i))
     )
 
     return loss
@@ -137,11 +133,14 @@ def compute_bottom_surface_loss(model_L2, x_bot, params_L2, k, c):
         model_L2, x_bot, params_L2, k, c
     )
 
+    # ✅ Apply same scaling as PDE for magnitude balance
+    scale = 1e5
+    
     loss = (
-        mse(sigma_r, torch.zeros_like(sigma_r)) +
-        mse(sigma_i, torch.zeros_like(sigma_i)) +
-        mse(Dx_r, torch.zeros_like(Dx_r)) +
-        mse(Dx_i, torch.zeros_like(Dx_i))
+        mse(sigma_r / scale, torch.zeros_like(sigma_r)) +
+        mse(sigma_i / scale, torch.zeros_like(sigma_i)) +
+        mse(Dx_r / scale, torch.zeros_like(Dx_r)) +
+        mse(Dx_i / scale, torch.zeros_like(Dx_i))
     )
 
     return loss
@@ -167,16 +166,19 @@ def compute_interface_loss(
         k, c
     )
 
+    # ✅ Apply same scaling as PDE for magnitude balance
+    scale = 1e5
+    
     # Combine all 4 interface equations (stress, displacement, potential, E-displacement)
     loss = (
-        mse(eq1_r, torch.zeros_like(eq1_r)) +
-        mse(eq1_i, torch.zeros_like(eq1_i)) +
-        mse(eq2_r, torch.zeros_like(eq2_r)) +
-        mse(eq2_i, torch.zeros_like(eq2_i)) +
-        mse(eq3_r, torch.zeros_like(eq3_r)) +
-        mse(eq3_i, torch.zeros_like(eq3_i)) +
-        mse(eq4_r, torch.zeros_like(eq4_r)) +
-        mse(eq4_i, torch.zeros_like(eq4_i))
+        mse(eq1_r / scale, torch.zeros_like(eq1_r)) +
+        mse(eq1_i / scale, torch.zeros_like(eq1_i)) +
+        mse(eq2_r / scale, torch.zeros_like(eq2_r)) +
+        mse(eq2_i / scale, torch.zeros_like(eq2_i)) +
+        mse(eq3_r / scale, torch.zeros_like(eq3_r)) +
+        mse(eq3_i / scale, torch.zeros_like(eq3_i)) +
+        mse(eq4_r / scale, torch.zeros_like(eq4_r)) +
+        mse(eq4_i / scale, torch.zeros_like(eq4_i))
     )
 
     return loss
@@ -221,13 +223,12 @@ def total_loss(
     k,
     c,
     u_pde=10.0,
-    u_air=1.0,
-    u_bc=1.0,
-    u_int=10.0,
-    u_amp=100.0
+    u_bc=5.0,
+    u_int=1.0,
+    u_amp=10.0
 ):
 
-    loss_pde, loss_air = compute_pde_loss(
+    loss_pde = compute_pde_loss(
         model_L1, model_L2, model_L3,
         x_L1, x_L2, x_L3,
         params_L1, params_L2, params_L3,
@@ -241,7 +242,6 @@ def total_loss(
 
     loss_total = (
       u_pde * loss_pde +
-      u_air * loss_air +
       u_bc  * (loss_top + loss_bot) +
       u_int * loss_int +
      u_amp * loss_amp
@@ -249,7 +249,6 @@ def total_loss(
 
     return loss_total, {
      "pde": loss_pde.item(),
-     "air": loss_air.item(),
      "bc_top": loss_top.item(),
      "bc_bottom": loss_bot.item(),
      "interface": loss_int.item(),

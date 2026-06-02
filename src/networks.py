@@ -33,7 +33,7 @@ class PINN(nn.Module):
 # --------------------------------------------------
 # Network factory
 # --------------------------------------------------
-def get_all_networks():
+def get_all_networks(width=128, depth=5):
     """
     Returns PINN models for:
     - Layer 1 (piezo-viscoelastic)
@@ -43,28 +43,25 @@ def get_all_networks():
     ✅ INCREASED CAPACITY for better convergence
     """
 
-    # 🔹 Layer 1
     net_L1 = PINN(
         in_dim=2,
-        out_dim=4,   # [U_r, U_i, Phi_r, Phi_i]
-        width=128,   # INCREASED from 64
-        depth=5      # INCREASED from 3
+        out_dim=4,
+        width=width,
+        depth=depth
     )
-
-    # 🔹 Layer 2
     net_L2 = PINN(
         in_dim=2,
         out_dim=4,
-        width=128,   # INCREASED from 64
-        depth=5      # INCREASED from 3
+        width=width,
+        depth=depth
     )
 
     # 🔹 Air layer
     net_L3 = PINN(
         in_dim=2,
-        out_dim=4,   # still 4 for consistency (U unused)
-        width=128,   # INCREASED from 64
-        depth=5      # INCREASED from 3
+        out_dim=4,
+        width=width,
+        depth=depth
     )
 
     return net_L1, net_L2, net_L3
