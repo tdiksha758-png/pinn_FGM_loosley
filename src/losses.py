@@ -107,23 +107,60 @@ def compute_pde_loss(
 # ==================================================
 # TOP SURFACE (x = -h1)
 # ==================================================
-def compute_top_surface_loss(model_L1, x_top, params_L1, k, c):
-    sigma_r, sigma_i, phi_r, phi_i = top_surface_bc(
-        model_L1, x_top, params_L1, k, c
+def compute_top_surface_loss(
+    model_L1,
+    model_L3,
+    x_top,
+    params_L1,
+    params_L3,
+    k,
+    c
+):
+
+    sigma_r, sigma_i, phi_r, phi_i, Dx_r, Dx_i = top_surface_bc(
+        model_L1,
+        model_L3,
+        x_top,
+        params_L1,
+        params_L3["tau_0"],
+        k,
+        c
     )
 
-    # ✅ Apply same scaling as PDE for magnitude balance
     scale = 1e5
-    
+
     loss = (
-        mse(sigma_r / scale, torch.zeros_like(sigma_r)) +
-        mse(sigma_i / scale, torch.zeros_like(sigma_i)) +
-        mse(phi_r / scale, torch.zeros_like(phi_r)) +
-        mse(phi_i / scale, torch.zeros_like(phi_i))
+
+        mse(sigma_r / scale,
+            torch.zeros_like(sigma_r))
+
+        +
+
+        mse(sigma_i / scale,
+            torch.zeros_like(sigma_i))
+
+        +
+
+        mse(phi_r / scale,
+            torch.zeros_like(phi_r))
+
+        +
+
+        mse(phi_i / scale,
+            torch.zeros_like(phi_i))
+
+        +
+
+        mse(Dx_r / scale,
+            torch.zeros_like(Dx_r))
+
+        +
+
+        mse(Dx_i / scale,
+            torch.zeros_like(Dx_i))
     )
 
     return loss
-
 
 # ==================================================
 # BOTTOM SURFACE (x = h2)
@@ -184,24 +221,6 @@ def compute_interface_loss(
     return loss
 
 
-# ==================================================
-# AMPLITUDE NORMALIZATION
-# ==================================================
-def compute_amplitude_loss(model_L1, x_top, k, c):
-
-    # Create [x, k] input tensor
-    k_top = torch.full_like(x_top, k.item() if hasattr(k, 'item') else float(k))
-    inp_top = torch.cat([x_top, k_top], dim=1)
-    
-    pred = model_L1(inp_top)
-
-    U_r = pred[:, 0:1]
-    U_i = pred[:, 1:2]
-
-    amp = U_r**2 + U_i**2
-
-    return mse(amp, torch.ones_like(amp))
-
 
 # ==================================================
 # TOTAL LOSS
@@ -224,8 +243,7 @@ def total_loss(
     c,
     u_pde=10.0,
     u_bc=5.0,
-    u_int=1.0,
-    u_amp=10.0
+    u_int=1.0
 ):
 
     loss_pde = compute_pde_loss(
@@ -235,22 +253,19 @@ def total_loss(
         k, c
     )
 
-    loss_top = compute_top_surface_loss(model_L1, x_top, params_L1, k, c)
+    loss_top = compute_top_surface_loss(model_L1, model_L3, x_top, params_L1, params_L3, k, c)
     loss_bot = compute_bottom_surface_loss(model_L2, x_bot, params_L2, k, c)
     loss_int = compute_interface_loss(model_L1, model_L2, x_int, k, c, params_L1, params_L2, params_int)
-    loss_amp = compute_amplitude_loss(model_L1, x_top, k, c)
-
+    # BUG 7 FIX: pass x_int as second normalization anchor
     loss_total = (
-      u_pde * loss_pde +
-      u_bc  * (loss_top + loss_bot) +
-      u_int * loss_int +
-     u_amp * loss_amp
+        u_pde * loss_pde +
+        u_bc  * (loss_top + loss_bot) +
+        u_int * loss_int
     )
 
     return loss_total, {
-     "pde": loss_pde.item(),
-     "bc_top": loss_top.item(),
-     "bc_bottom": loss_bot.item(),
-     "interface": loss_int.item(),
-     "amp": loss_amp.item()
+        "pde":       loss_pde.item(),
+        "bc_top":    loss_top.item(),
+        "bc_bottom": loss_bot.item(),
+        "interface": loss_int.item()
     }

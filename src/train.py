@@ -7,6 +7,7 @@ from .sampling import (
     sample_domain_points,
     sample_top_surface,
     sample_interface,
+    sample_bottom_surface,   # BUG 3 FIX: use correct bottom sampler
     sample_far_field
 )
 from .losses import total_loss
@@ -27,7 +28,6 @@ def train_for_single_k(
     n_domain=5000,
     n_bc=1000,
     n_int=1000,
-    n_far=1000,
     lr=1e-3
 ):
 
@@ -36,44 +36,61 @@ def train_for_single_k(
     # --------------------------------------------------
     # Load parameters
     # --------------------------------------------------
-    params_L1 = CONFIG["LAYER1"]
-    params_L2 = CONFIG["LAYER2"]
-    geom      = CONFIG["GEOMETRY"]
-    domain    = CONFIG["DOMAIN"]
+    params_L1  = CONFIG["LAYER1"]
+    params_L2  = CONFIG["LAYER2"]
+    geom       = CONFIG["GEOMETRY"]
+    domain     = CONFIG["DOMAIN"]
 
     def to_tensor_dict(d):
         return {
-            k: torch.tensor(v, device=DEVICE, dtype=torch.float32)
+            key: torch.tensor(v, device=DEVICE, dtype=torch.float32)
             if isinstance(v, (int, float)) else v
-            for k, v in d.items()
+            for key, v in d.items()
         }
 
-    params_L1 = to_tensor_dict(params_L1)
-    params_L2 = to_tensor_dict(params_L2)
+    params_L1  = to_tensor_dict(params_L1)
+    params_L2  = to_tensor_dict(params_L2)
     params_int = to_tensor_dict(CONFIG["INTERFACE"])
-    params_L3 = to_tensor_dict(CONFIG["AIR"])
+    params_L3  = to_tensor_dict(CONFIG["AIR"])
 
     weights = CONFIG["TRAINING"]["loss_weights"]
+
     # --------------------------------------------------
-    # 🔹 Shear wave speeds (ADDED)
+    # Shear wave speeds (used for logging only — NOT as a penalty)
+    # BUG 2 FIX: removed the wrong physics_penalty that clamped c between
+    #            c_shear_L1 and c_shear_L2.  Love-wave phase velocity can be
+    #            well above both shear speeds; boxing c to that range forces the
+    #            optimizer to a wrong solution.
     # --------------------------------------------------
-    c_shear_L1 = torch.sqrt(params_L1["C44R1"] / params_L1["rho1"])
-    c_shear_L2 = torch.sqrt(params_L2["C44R2"] / params_L2["rho2"])
+    c_shear_L1 = torch.sqrt(params_L1["C44R1"] / params_L1["rho1"]).item()
+    c_shear_L2 = torch.sqrt(params_L2["C44R2"] / params_L2["rho2"]).item()
 
     # --------------------------------------------------
     # Optimizer
+    # BUG 6 FIX: include [c] in the clip_grad_norm_ call below so c's
+    #            gradient is also clipped and doesn't jump erratically.
     # --------------------------------------------------
     optimizer = optim.Adam(
         [
             {"params": model_L1.parameters(), "lr": lr},
             {"params": model_L2.parameters(), "lr": lr},
             {"params": model_L3.parameters(), "lr": lr},
-            {"params": [c], "lr": 1e-4},
+            {"params": [c], "lr": 5e-2},   # higher lr so c can travel far enough
         ]
     )
 
+    # LR scheduler: reduce c's lr smoothly so it settles
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=n_epochs // 4, gamma=0.5)
+
     best_loss = float("inf")
-    best_c = c.item()
+    best_c    = c.item()
+
+    def ensure_tensor(x):
+        if not isinstance(x, torch.Tensor):
+            x = torch.tensor(x, dtype=torch.float32, device=DEVICE)
+        if x.ndim == 1:
+            x = x.unsqueeze(1)
+        return x
 
     # --------------------------------------------------
     # Training loop
@@ -85,93 +102,82 @@ def train_for_single_k(
 
         x_top = sample_top_surface(n_bc, geom)
         x_int = sample_interface(n_int)
-        x_bot = sample_far_field(n_far, geom)
+        # BUG 3 FIX: x_bot must be at x = +h2 (bottom of layer 2), not at the
+        #            far-field air boundary x = -(h1+h3).
+        x_bot = sample_bottom_surface(n_bc, geom)
 
-        def ensure_tensor(x):
-            if not isinstance(x, torch.Tensor):
-                x = torch.tensor(x, dtype=torch.float32, device=DEVICE)
-            if x.ndim == 1:
-                x = x.unsqueeze(1)
-            return x
-
-        x_L1 = ensure_tensor(x_L1)
-        x_L2 = ensure_tensor(x_L2)
-        x_L3 = ensure_tensor(x_L3)
-
+        x_L1  = ensure_tensor(x_L1)
+        x_L2  = ensure_tensor(x_L2)
+        x_L3  = ensure_tensor(x_L3)
         x_top = ensure_tensor(x_top)
         x_int = ensure_tensor(x_int)
         x_bot = ensure_tensor(x_bot)
 
         optimizer.zero_grad()
 
-        # -------- Base PINN loss --------
+        # -------- PINN loss --------
+        # BUG 1 FIX: total_loss() has no u_air parameter — removed it.
         loss, logs = total_loss(
-         model_L1,
-         model_L2,
-         model_L3,
-         x_L1,
-         x_L2,
-         x_L3,
-         x_top,
-         x_int,
-         x_bot,
-         params_L1,
-         params_L2,
-         params_L3,
-         params_int,
-         k,
-         c,
-         u_pde=weights["pde"],
-         u_air=weights["air"],
-         u_bc=weights["bc"],
-         u_int=weights["interface"],
-         u_amp=weights["normalization"]
-         )
-
-        # --------------------------------------------------
-        # 🔹 Physics penalty using c_shear (ADDED)
-        # --------------------------------------------------
-        physics_penalty = (
-            100.0 * torch.relu(c_shear_L1 - c)**2 +
-            100.0 * torch.relu(c - c_shear_L2)**2
+            model_L1,
+            model_L2,
+            model_L3,
+            x_L1,
+            x_L2,
+            x_L3,
+            x_top,
+            x_int,
+            x_bot,
+            params_L1,
+            params_L2,
+            params_L3,
+            params_int,
+            k,
+            c,
+            u_pde=weights["pde"],
+            u_bc=weights["bc"],
+            u_int=weights["interface"],
+            u_amp=weights["normalization"]
         )
 
-        total_loss_val = loss + physics_penalty
+        loss.backward()
 
-        total_loss_val.backward()
-
-        torch.nn.utils.clip_grad_norm_(
+        # BUG 6 FIX: clip c gradient together with network gradients
+        all_params = (
             list(model_L1.parameters()) +
             list(model_L2.parameters()) +
-            list(model_L3.parameters()),
-            max_norm=1.0
+            list(model_L3.parameters()) +
+            [c]
         )
+        torch.nn.utils.clip_grad_norm_(all_params, max_norm=1.0)
 
         optimizer.step()
+        scheduler.step()
 
         # Track best
-        if total_loss_val.item() < best_loss:
-            best_loss = total_loss_val.item()
-            best_c = c.item()
+        if loss.item() < best_loss:
+            best_loss = loss.item()
+            best_c    = c.item()
 
         # Logging
         if epoch % 500 == 0:
             print(
                 f"Epoch {epoch:6d} | "
-                f"Loss = {total_loss_val.item():.3e} | "
-                f"c = {c.item():.6f} | "
-                f"PDE = {logs.get('pde',0):.2e} | "
-                f"BC = {logs.get('bc_top',0):.2e} | "
-                f"INT = {logs.get('interface',0):.2e} | "
-                f"FAR = {logs.get('far',0):.2e} | "
-                f"AMP = {logs.get('amp',0):.2e}"
+                f"Loss={loss.item():.3e} | "
+                f"PDE={logs.get('pde',0):.2e} | "
+                f"BC={logs.get('bc_top',0):.2e} | "
+                f"c={c.item():.4f} | "
+                f"c/c_shear={c.item()/c_shear_L1:.3f}"
             )
 
+    print(f"✓ Final c(k={k:.3f}) = {best_c:.4f}  (c/c_shear_L1={best_c/c_shear_L1:.3f})")
     return best_c
 
 
 # ==================================================
 # Dispersion sweep
+# BUG 5 FIX: reinitialise c from a physics-based guess at every k value so
+#            each solve starts independently and is not poisoned by the
+#            previous k's converged (possibly wrong) value.
 # ==================================================
 def train_dispersion():
 
@@ -182,42 +188,46 @@ def train_dispersion():
     )
 
     model_L1, model_L2, model_L3 = get_all_networks()
-
     model_L1.to(DEVICE)
     model_L2.to(DEVICE)
     model_L3.to(DEVICE)
 
-    # 🔹 Better initial guess using shear speeds (ADDED)
     params_L1 = CONFIG["LAYER1"]
     params_L2 = CONFIG["LAYER2"]
 
-    c_init = 0.5 * (
-        (params_L1["C44R1"] / params_L1["rho1"])**0.5 +
-        (params_L2["C44R2"] / params_L2["rho2"])**0.5
-    )
+    # Mid-point between the two shear speeds — a physically reasonable starting
+    # guess that lets Adam drive c upward freely.
+    c_shear_L1 = (params_L1["C44R1"] / params_L1["rho1"]) ** 0.5
+    c_shear_L2 = (params_L2["C44R2"] / params_L2["rho2"]) ** 0.5
+    c_start    = 0.5 * (c_shear_L1 + c_shear_L2)
 
-    c = torch.nn.Parameter(
-        torch.tensor(c_init, device=DEVICE, dtype=torch.float32)
-    )
+    print(f"\nDevice: {DEVICE}")
+    print(f"c_shear_L1 = {c_shear_L1:.1f},  c_shear_L2 = {c_shear_L2:.1f},  c_start = {c_start:.1f}")
 
     dispersion = []
 
-    for idx, k in enumerate(k_vals):
+    for idx, k_tensor in enumerate(k_vals):
+        k = k_tensor.item()
 
-        print(f"\n{'='*50}")
-        print(f"Training for k = {k.item():.3f} ({idx+1}/{len(k_vals)})")
-        print(f"{'='*50}")
+        print(f"\n{'='*60}")
+        print(f"Training for k = {k:.3f}  ({idx+1}/{len(k_vals)})")
+        print(f"{'='*60}")
+
+        # BUG 5 FIX: fresh c for every k
+        c = torch.nn.Parameter(
+            torch.tensor(c_start, device=DEVICE, dtype=torch.float32)
+        )
 
         c_val = train_for_single_k(
-            k.item(),
+            k,
             model_L1,
             model_L2,
             model_L3,
             c,
-            n_epochs=5000 if idx == 0 else 2500
+            n_epochs=CONFIG["TRAINING"]["epochs"]
         )
 
-        dispersion.append([k.item(), c_val])
+        dispersion.append([k, c_val])
 
     return dispersion
 
@@ -226,9 +236,8 @@ def train_dispersion():
 # MAIN
 # ==================================================
 if __name__ == "__main__":
-
     print("\nRunning PINN solver (3-layer piezo-viscoelastic)...\n")
-
     results = train_dispersion()
-
     print("\n✓ Training completed")
+    for k, c in results:
+        print(f"  k={k:.4f}  c={c:.4f}")
