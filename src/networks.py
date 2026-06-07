@@ -1,27 +1,106 @@
 import torch
 import torch.nn as nn
+from itertools import cycle
 
 
-# --------------------------------------------------
-# Generic PINN network
-# --------------------------------------------------
+# ==================================================
+# CUSTOM ACTIVATIONS
+# ==================================================
+
+class Sin(nn.Module):
+    def forward(self, x):
+        return torch.sin(x)
+
+
+class Arctan(nn.Module):
+    def forward(self, x):
+        return torch.atan(x)
+
+
+# ==================================================
+# ACTIVATION SELECTOR
+# ==================================================
+
+def get_activation(name):
+    name = name.lower()
+
+    if name == "tanh":
+        return nn.Tanh()
+
+    elif name == "sigmoid":
+        return nn.Sigmoid()
+
+    elif name == "relu":
+        return nn.ReLU()
+
+    elif name == "gelu":
+        return nn.GELU()
+
+    elif name == "silu":
+        return nn.SiLU()
+
+    elif name == "softplus":
+        return nn.Softplus()
+
+    elif name == "sin":
+        return Sin()
+
+    elif name == "arctan":
+        return Arctan()
+
+    else:
+        raise ValueError(f"Unknown activation function: {name}")
+
+
+# ==================================================
+# GENERIC PINN NETWORK
+# ==================================================
+
 class PINN(nn.Module):
     """
-    Fully-connected neural network for multi-field PINN
-    Outputs: [U_r, U_i, Phi_r, Phi_i]
+    Fully-connected PINN for each layer.
+
+    Input  : [x, k]
+    Output : [U_r, U_i, Phi_r, Phi_i]
     """
 
-    def __init__(self, in_dim, out_dim, width=64, depth=3):
+    def __init__(
+        self,
+        in_dim=2,
+        out_dim=4,
+        width=64,
+        depth=3,
+        activation="tanh"
+    ):
         super().__init__()
 
         layers = []
-        layers.append(nn.Linear(in_dim, width))
-        layers.append(nn.Tanh())
 
+        # --------------------------------------------------
+        # If activation is a list, cycle through activations
+        # Example: ["sin", "tanh", "gelu"]
+        # --------------------------------------------------
+        if isinstance(activation, list):
+            act_cycle = cycle(activation)
+        else:
+            act_cycle = cycle([activation])
+
+        # --------------------------------------------------
+        # Input layer
+        # --------------------------------------------------
+        layers.append(nn.Linear(in_dim, width))
+        layers.append(get_activation(next(act_cycle)))
+
+        # --------------------------------------------------
+        # Hidden layers
+        # --------------------------------------------------
         for _ in range(depth - 1):
             layers.append(nn.Linear(width, width))
-            layers.append(nn.Tanh())
+            layers.append(get_activation(next(act_cycle)))
 
+        # --------------------------------------------------
+        # Output layer
+        # --------------------------------------------------
         layers.append(nn.Linear(width, out_dim))
 
         self.model = nn.Sequential(*layers)
@@ -30,41 +109,48 @@ class PINN(nn.Module):
         return self.model(x)
 
 
-# --------------------------------------------------
-# Network factory
-# --------------------------------------------------
-def get_all_networks():
+# ==================================================
+# NETWORK FACTORY FOR YOUR THREE-DOMAIN PROBLEM
+# ==================================================
+
+def get_all_networks(
+    width=128,
+    depth=5,
+    activation="tanh"
+):
     """
     Returns PINN models for:
-    - Layer 1 (piezo-viscoelastic)
-    - Layer 2 (piezo-viscoelastic)
-    - Air layer (electrostatic)
-    
-    ✅ INCREASED CAPACITY for better convergence
+
+    Layer 1 : Piezo-viscoelastic upper layer
+    Layer 2 : Piezo-viscoelastic lower layer
+    Layer 3 : Air / vacuum layer
+
+    Input  : [x, k]
+    Output : [U_r, U_i, Phi_r, Phi_i]
     """
 
-    # 🔹 Layer 1
-    net_L1 = PINN(
-        in_dim=2,
-        out_dim=4,   # [U_r, U_i, Phi_r, Phi_i]
-        width=128,   # INCREASED from 64
-        depth=5      # INCREASED from 3
-    )
-
-    # 🔹 Layer 2
-    net_L2 = PINN(
+    model_L1 = PINN(
         in_dim=2,
         out_dim=4,
-        width=128,   # INCREASED from 64
-        depth=5      # INCREASED from 3
+        width=width,
+        depth=depth,
+        activation=activation
     )
 
-    # 🔹 Air layer
-    net_L3 = PINN(
+    model_L2 = PINN(
         in_dim=2,
-        out_dim=4,   # still 4 for consistency (U unused)
-        width=128,   # INCREASED from 64
-        depth=5      # INCREASED from 3
+        out_dim=4,
+        width=width,
+        depth=depth,
+        activation=activation
     )
 
-    return net_L1, net_L2, net_L3
+    model_L3 = PINN(
+        in_dim=2,
+        out_dim=4,
+        width=width,
+        depth=depth,
+        activation=activation
+    )
+
+    return model_L1, model_L2, model_L3

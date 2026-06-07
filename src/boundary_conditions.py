@@ -1,3 +1,65 @@
+# ==================================================
+# 🔹 TOP SURFACE (x = -h1)
+#
+# SHORT CIRCUIT CASE
+#
+# BC:
+# σ_xz = 0
+# φ = 0
+#
+# ==================================================
+# def top_surface_bc(model_L1, x_top, params_L1, k, c):
+#
+#     x_top = x_top.clone().detach().requires_grad_(True)
+#
+#     k_top = torch.full_like(
+#         x_top,
+#         k.item() if hasattr(k, 'item') else float(k)
+#     )
+#
+#     inp_top = torch.cat([x_top, k_top], dim=1)
+#
+#     out = model_L1(inp_top)
+#
+#     U_r, U_i = out[:, 0:1], out[:, 1:2]
+#     Phi_r, Phi_i = out[:, 2:3], out[:, 3:4]
+#
+#     U_r_x   = grad_bc(U_r,   x_top)
+#     U_i_x   = grad_bc(U_i,   x_top)
+#     Phi_r_x = grad_bc(Phi_r, x_top)
+#     Phi_i_x = grad_bc(Phi_i, x_top)
+#
+#     C_r = params_L1["C44R1"]
+#     C_i = k*c*params_L1["C44I1"]
+#
+#     e_r = params_L1["e15R1"]
+#     e_i = k*c*params_L1["e15I1"]
+#
+#     sigma_r = (
+#         C_r * U_r_x - C_i * U_i_x
+#         + e_r * Phi_r_x - e_i * Phi_i_x
+#     ) / C_r
+#
+#     sigma_i = (
+#         C_r * U_i_x + C_i * U_r_x
+#         + e_r * Phi_i_x + e_i * Phi_r_x
+#     ) / C_r
+#
+#     return sigma_r, sigma_i, Phi_r, Phi_i
+
+
+# ==================================================
+# 🔹 TOP SURFACE (x = -h1)
+#
+# OPEN CIRCUIT CASE
+#
+# σ_xz^(1) = 0
+# φ^(1) = φ^(a)
+# D_x^(1) = D_x^(a)
+#
+# D_x^(a) = -tau_0 ∂φ^(a)/∂x
+#
+# ==================================================
 import torch
 
 # --------------------------------------------------
@@ -16,38 +78,122 @@ def grad_bc(u, x):
 # 🔹 TOP SURFACE (x = -h1)  — SHORT CIRCUIT
 #    BC: σ_xz = 0,  φ = 0
 # ==================================================
-def top_surface_bc(model_L1, x_top, params_L1, k, c):
+def top_surface_bc(
+    model_L1,
+    model_L3,
+    x_top,
+    params_L1,
+    tau_0,
+    k,
+    c
+):
 
     x_top = x_top.clone().detach().requires_grad_(True)
-    
-    # Create [x, k] input tensor
-    k_top = torch.full_like(x_top, k.item() if hasattr(k, 'item') else float(k))
+
+    k_top = torch.full_like(
+        x_top,
+        k.item() if hasattr(k, 'item') else float(k)
+    )
+
     inp_top = torch.cat([x_top, k_top], dim=1)
-    
-    out = model_L1(inp_top)
 
-    U_r, U_i = out[:, 0:1], out[:, 1:2]
-    Phi_r, Phi_i = out[:, 2:3], out[:, 3:4]
+    # ==================================================
+    # Layer 1 (Piezo-viscoelastic)
+    # ==================================================
+    out1 = model_L1(inp_top)
 
-    U_r_x   = grad_bc(U_r,   x_top)
-    U_i_x   = grad_bc(U_i,   x_top)
-    Phi_r_x = grad_bc(Phi_r, x_top)
-    Phi_i_x = grad_bc(Phi_i, x_top)
+    U_r, U_i = out1[:, 0:1], out1[:, 1:2]
+    Phi1_r, Phi1_i = out1[:, 2:3], out1[:, 3:4]
 
+    U_r_x   = grad_bc(U_r, x_top)
+    U_i_x   = grad_bc(U_i, x_top)
+
+    Phi1_r_x = grad_bc(Phi1_r, x_top)
+    Phi1_i_x = grad_bc(Phi1_i, x_top)
+
+    # ==================================================
+    # Air layer
+    # ==================================================
+    out3 = model_L3(inp_top)
+
+    PhiA_r = out3[:, 2:3]
+    PhiA_i = out3[:, 3:4]
+
+    PhiA_r_x = grad_bc(PhiA_r, x_top)
+    PhiA_i_x = grad_bc(PhiA_i, x_top)
+
+    # ==================================================
+    # Material parameters
+    # ==================================================
     C_r = params_L1["C44R1"]
-    C_i = k*c*params_L1["C44I1"]
+    C_i = k * c * params_L1["C44I1"]
+
     e_r = params_L1["e15R1"]
-    e_i = k*c*params_L1["e15I1"]
+    e_i = k * c * params_L1["e15I1"]
 
-    # σ_xz = C*∂u + e*∂φ = 0
-    # Divide by C_r so residual ~ O(∂u) ~ O(1)
-    sigma_r = (C_r * U_r_x - C_i * U_i_x + e_r * Phi_r_x - e_i * Phi_i_x) / C_r
-    sigma_i = (C_r * U_i_x + C_i * U_r_x + e_r * Phi_i_x + e_i * Phi_r_x) / C_r
+    tau_r = params_L1["tauR1"]
+    tau_i = k * c * params_L1["tauI1"]
 
-    # φ = 0  (network output, no scaling needed)
-    return sigma_r, sigma_i, Phi_r, Phi_i
+    # ==================================================
+    # σxz = 0
+    # ==================================================
+    sigma_r = (
+        C_r * U_r_x
+        - C_i * U_i_x
+        + e_r * Phi1_r_x
+        - e_i * Phi1_i_x
+    ) / C_r
 
+    sigma_i = (
+        C_r * U_i_x
+        + C_i * U_r_x
+        + e_r * Phi1_i_x
+        + e_i * Phi1_r_x
+    ) / C_r
 
+    # ==================================================
+    # φ(1) = φ(a)
+    # ==================================================
+    phi_r = Phi1_r - PhiA_r
+    phi_i = Phi1_i - PhiA_i
+
+    # ==================================================
+    # Dx(1)
+    # ==================================================
+    Dx1_r = (
+        e_r * U_r_x
+        - e_i * U_i_x
+        - tau_r * Phi1_r_x
+        + tau_i * Phi1_i_x
+    ) / e_r
+
+    Dx1_i = (
+        e_r * U_i_x
+        + e_i * U_r_x
+        - tau_r * Phi1_i_x
+        - tau_i * Phi1_r_x
+    ) / e_r
+
+    # ==================================================
+    # Dx(a) = -tau0 dφ(a)/dx
+    # ==================================================
+    DxA_r = (-tau_0 * PhiA_r_x) / e_r
+    DxA_i = (-tau_0 * PhiA_i_x) / e_r
+
+    # ==================================================
+    # Dx(1) = Dx(a)
+    # ==================================================
+    Dx_r = Dx1_r - DxA_r
+    Dx_i = Dx1_i - DxA_i
+
+    return (
+        sigma_r,
+        sigma_i,
+        phi_r,
+        phi_i,
+        Dx_r,
+        Dx_i
+    )
 # ==================================================
 # 🔹 BOTTOM SURFACE (x = h2)
 #    BC: σ_xz = 0,  D_x = 0

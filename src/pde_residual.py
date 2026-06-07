@@ -61,20 +61,20 @@ def residual_layer1_piezo(model_L1, x_L1, k, c, params_L1):
         - k**2 * (e1_r * Phi1_i + e1_i * Phi1_r)
     )/C1_r
 
-    # Equation 2
+    # Equation 2  (∂Dx/∂x = 0,  full 2D form: e*u_xx - tau*phi_xx - k^2*(e*u - tau*phi) = 0)
     R2_real = (
         e1_r * U1_r_xx - e1_i * U1_i_xx
         - (tau1_r * Phi1_r_xx - tau1_i * Phi1_i_xx)
-        + e1_r * U1_r - e1_i * U1_i
-        - (tau1_r * Phi1_r - tau1_i * Phi1_i)
-    )/e1_r
+        - k**2 * (e1_r * U1_r - e1_i * U1_i)
+        + k**2 * (tau1_r * Phi1_r - tau1_i * Phi1_i)
+    ) / e1_r
 
     R2_imag = (
         e1_r * U1_i_xx + e1_i * U1_r_xx
         - (tau1_r * Phi1_i_xx + tau1_i * Phi1_r_xx)
-        + e1_r * U1_i + e1_i * U1_r
-        - (tau1_r * Phi1_i + tau1_i * Phi1_r)
-    )/e1_r
+        - k**2 * (e1_r * U1_i + e1_i * U1_r)
+        + k**2 * (tau1_r * Phi1_i + tau1_i * Phi1_r)
+    ) / e1_r
 
     return R1_real, R1_imag, R2_real, R2_imag
 
@@ -129,20 +129,20 @@ def residual_layer2_piezo(model_L2, x_L2, k, c, params_L2):
         - k**2 * (e2_r * Phi2_i + e2_i * Phi2_r)
     )/C2_r
 
-    # Equation 2
+    # Equation 2  (∂Dx/∂x = 0,  full 2D form: e*u_xx - tau*phi_xx - k^2*(e*u - tau*phi) = 0)
     R2_real = (
         e2_r * U2_r_xx - e2_i * U2_i_xx
         - (tau2_r * Phi2_r_xx - tau2_i * Phi2_i_xx)
-        + e2_r * U2_r - e2_i * U2_i
-        - (tau2_r * Phi2_r - tau2_i * Phi2_i)
-    )/e2_r
+        - k**2 * (e2_r * U2_r - e2_i * U2_i)
+        + k**2 * (tau2_r * Phi2_r - tau2_i * Phi2_i)
+    ) / e2_r
 
     R2_imag = (
         e2_r * U2_i_xx + e2_i * U2_r_xx
         - (tau2_r * Phi2_i_xx + tau2_i * Phi2_r_xx)
-        + e2_r * U2_i + e2_i * U2_r
-        - (tau2_r * Phi2_i + tau2_i * Phi2_r)
-    )/e2_r
+        - k**2 * (e2_r * U2_i + e2_i * U2_r)
+        + k**2 * (tau2_r * Phi2_i + tau2_i * Phi2_r)
+    ) / e2_r
 
     return R1_real, R1_imag, R2_real, R2_imag
 
