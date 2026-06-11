@@ -81,14 +81,14 @@ CONFIG = {
     "WAVENUMBER": {
         "k_min": 0.3308,
         "k_max": 1.1995,
-        "num_k": 8
+        "num_k": 12
     },
 
     # --------------------------------------------------
     # 🔹 Training parameters
     # --------------------------------------------------
     "TRAINING": {
-        "epochs": 20,
+        "epochs": 10000,
         "learning_rate": 5e-4,
 
         "loss_weights": {
