@@ -94,8 +94,8 @@ CONFIG = {
         "loss_weights": {
             "pde": 10.0,
             "air": 1.0,
-           "bc": 5.0,
-         "interface": 10.0,
+           "bc": 1.0,
+         "interface": 5.0,
          "normalization": 1.0
         }
     },
