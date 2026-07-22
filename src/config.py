@@ -86,18 +86,36 @@ CONFIG = {
 
     # --------------------------------------------------
     # 🔹 Training parameters
-    # --------------------------------------------------
+       # ==================================================
     "TRAINING": {
-        "epochs": 10000,
-        "learning_rate": 5e-4,
 
+        # Maximum epochs for each wavenumber
+        "epochs": 20,
+
+        # Learning rate for the neural networks
+        "learning_rate": 5.0e-4,
+
+        # Learning rate for phase-velocity parameter
+        "c_learning_rate": 1.0e-3,
+
+        # Number of sampled points
+        "n_domain": 5000,
+        "n_top": 1500,
+        "n_bottom": 1500,
+        "n_interface": 1000,
+
+        # Loss-function weights
         "loss_weights": {
             "pde": 10.0,
-            "air": 1.0,
-           "bc": 1.0,
-         "interface": 5.0,
-         "normalization": 1.0
-        }
+            "bc": 1.0,
+            "interface": 0.01
+        },
+
+        # Early-stopping threshold
+        "loss_tolerance": 1.0e-8,
+
+        # Training-output interval
+        "print_every": 100
     },
 
     # --------------------------------------------------
@@ -107,7 +125,7 @@ CONFIG = {
         "input_dim": 1,
         "output_dim": 4,   # [U_r, U_i, Phi_r, Phi_i]
         "hidden_layers": 3,
-        "neurons": 64,
+        "neurons": 128,
         "activation": "tanh"
     },
     

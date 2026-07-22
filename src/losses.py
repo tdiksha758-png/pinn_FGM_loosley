@@ -77,8 +77,7 @@ def compute_pde_loss(
     # --------------------------------------------------
     # Scaling
     # --------------------------------------------------
-    scale = 1e5
-
+    scale = 1e2
     # --------------------------------------------------
     # COMBINED PDE LOSS (ALL LAYERS)
     # --------------------------------------------------
@@ -94,8 +93,8 @@ def compute_pde_loss(
         mse(R2r_L2 / scale, torch.zeros_like(R2r_L2)) +
         mse(R2i_L2 / scale, torch.zeros_like(R2i_L2)) +
 
-        mse(R3r, torch.zeros_like(R3r)) +
-        mse(R3i, torch.zeros_like(R3i)) +
+        mse(R3r / scale, torch.zeros_like(R3r)) +
+        mse(R3i / scale, torch.zeros_like(R3i)) +
         mse(Dx3r / scale, torch.zeros_like(Dx3r)) +
         mse(Dx3i / scale, torch.zeros_like(Dx3i))
 
@@ -127,7 +126,7 @@ def compute_top_surface_loss(
         c
     )
 
-    scale = 1e5
+    scale = 1e2
 
     loss = (
 
@@ -171,7 +170,7 @@ def compute_bottom_surface_loss(model_L2, x_bot, params_L2, k, c):
     )
 
     # ✅ Apply same scaling as PDE for magnitude balance
-    scale = 1e5
+    scale = 1e2
     
     loss = (
         mse(sigma_r / scale, torch.zeros_like(sigma_r)) +
@@ -204,7 +203,7 @@ def compute_interface_loss(
     )
 
     # ✅ Apply same scaling as PDE for magnitude balance
-    scale = 1e5
+    scale = 1e2
     
     # Combine all 4 interface equations (stress, displacement, potential, E-displacement)
     loss = (
