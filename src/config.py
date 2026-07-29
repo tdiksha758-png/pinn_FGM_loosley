@@ -56,7 +56,7 @@ CONFIG = {
     # --------------------------------------------------
     "INTERFACE": {
         "F": 1e9,        # Interface stiffness
-        "delta": 0.2     # Sliding parameter
+        "delta": 0.002     # Sliding parameter
     },
 
     # --------------------------------------------------
@@ -79,8 +79,8 @@ CONFIG = {
     # 🔹 Wavenumber sweep
     # --------------------------------------------------
     "WAVENUMBER": {
-        "k_min": 0.3308,
-        "k_max": 1.1995,
+        "k_min": 0.40201,
+        "k_max": 1.24434,
         "num_k": 12
     },
 
@@ -90,7 +90,7 @@ CONFIG = {
     "TRAINING": {
 
         # Maximum epochs for each wavenumber
-        "epochs": 20,
+        "epochs": 10000,
 
         # Learning rate for the neural networks
         "learning_rate": 5.0e-4,
@@ -125,7 +125,7 @@ CONFIG = {
         "input_dim": 1,
         "output_dim": 4,   # [U_r, U_i, Phi_r, Phi_i]
         "hidden_layers": 3,
-        "neurons": 128,
+        "neurons": 64,
         "activation": "tanh"
     },
     

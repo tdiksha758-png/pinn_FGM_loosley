@@ -77,7 +77,7 @@ def compute_pde_loss(
     # --------------------------------------------------
     # Scaling
     # --------------------------------------------------
-    scale = 1e2
+    scale = 1e3
     # --------------------------------------------------
     # COMBINED PDE LOSS (ALL LAYERS)
     # --------------------------------------------------
@@ -126,7 +126,7 @@ def compute_top_surface_loss(
         c
     )
 
-    scale = 1e2
+    scale = 1e3
 
     loss = (
 
@@ -203,7 +203,7 @@ def compute_interface_loss(
     )
 
     # ✅ Apply same scaling as PDE for magnitude balance
-    scale = 1e2
+    scale = 1e3
     
     # Combine all 4 interface equations (stress, displacement, potential, E-displacement)
     loss = (
