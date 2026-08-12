@@ -1,70 +1,81 @@
 """
 Configuration file for SH-wave dispersion in a functionally graded
-layered medium using PINNs
+Kelvin-Voigt viscoelastic layered medium using PINNs
 """
 
 CONFIG = {
 
     # --------------------------------------------------
-    # Functionally Graded Layer (Linear variation)
+    # Functionally Graded Viscoelastic Layer (Linear variation)
     # --------------------------------------------------
     "LAYER": {
-        "mu_0": 0.3e11,         # Shear modulus at reference (Pa)
-        "rho_0": 7500.0,          # Density (kg/m^3)
-        "P_0": 1e7,               # Initial stress along x1 (Pa)
-        "alpha": 0.2,             # Grading parameter along thickness
-        "s": 100.0,               # Raw stiffness of imperfect interface
-        "L": 2.0,                 # Layer thickness
+        "Ge_0": 4.34e10,          # Elastic shear modulus (Pa)
+        "Gv_0": 6.77e10/50,       # Viscous shear modulus (Pa.s)
+
+        "mu_0": 4.34e10,          # (Retained for compatibility)
+        "rho_0": 2217.0,          # Density (kg/m^3)
+        "P_0": 5.0e10,            # Initial stress (Pa)
+
+        "alpha": 1.0,            # Linear grading parameter
+
+        "s": 100.0,
+
+        "L": 0.5                 # Layer thickness
     },
 
     # --------------------------------------------------
-    # Functionally Graded Substrate (Quadratic variation)
+    # Functionally Graded Viscoelastic Substrate
+    # (Quadratic variation)
     # --------------------------------------------------
     "SUBSTRATE": {
-        "mu_0": 0.28e11,          # Shear modulus at reference (Pa)
-        "rho_0": 2800.0,          # Density (kg/m^3)
-        "P_0": 1e7,               # Initial stress along x1 (Pa)
-        "alpha": 0.9,             # Quadratic grading parameter
+        "Ge_0": 6.77e10,          # Elastic shear modulus (Pa)
+        "Gv_0": 4.34e10/60,       # Viscous shear modulus (Pa.s)
+
+        "mu_0": 6.77e10,          # (Retained for compatibility)
+        "rho_0": 3333.0,
+        "P_0": 1.0e10,
+
+        "alpha": 1.0
     },
 
-    
     # --------------------------------------------------
     # Geometry
     # --------------------------------------------------
     "GEOMETRY": {
-        "L": 1.0,                 # Layer thickness
-        "H_trunc": 30.0,          # Truncated depth for substrate
+        "L": 0.5,
+        "H_trunc": 20.0
     },
 
     # --------------------------------------------------
-    # Wavenumber sweep (non-dimensional)
+    # Wavenumber Sweep
     # --------------------------------------------------
     "WAVENUMBER": {
-        "k_min": 0.052,
-        "k_max": 0.25,
-        "num_k": 16
+        "k_min": 0.194468,
+        "k_max": 2.00,
+        "num_k": 30
     },
 
     # --------------------------------------------------
-    # Training parameters
+    # Training Parameters
     # --------------------------------------------------
     "TRAINING": {
         "epochs": 20000,
         "learning_rate": 5e-4,
+
         "loss_weights": {
-            "pde": 10.0,         # Weight for PDE residual
-            "bc": 1.0,           # Weight for boundary conditions
-            "interface": 0.01,   # Weight for imperfect interface
-            "far": 0.01          # Weight for far-field decay
+            "pde": 10.0,
+            "bc": 1.0,
+            "interface": 0.01,
+            "far": 0.01
         }
     },
 
     # --------------------------------------------------
-    # PINN normalization / reference
+    # Reference Quantities
     # --------------------------------------------------
     "REFERENCE": {
-        "beta_l": None,           # Can compute from mu_0/rho_0 for layer
-        "beta_h": None            # Can compute from mu_0/rho_0 for substrate
+        "beta_l": None,
+        "beta_h": None
     }
 
 }

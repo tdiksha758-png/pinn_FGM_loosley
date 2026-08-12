@@ -21,15 +21,19 @@ def sample_domain_points(n_domain, geom):
         z_half    : points in half-space [0, L] (non-dimensional)
     """
 
-    H = geom.get("H", 1.0)
-    L = geom.get("L", 29.0)
+    H = geom["L"]              # Layer thickness
+    H_trunc = geom["H_trunc"]  # Truncated half-space
+    z_layer = sample_uniform(
+        n_domain,
+        -H,
+        0.0
+    )
 
-    # Layer: z ∈ [-H, 0]
-    z_layer = sample_uniform(n_domain, -H, 0.0)
-
-    # Half-space: z ∈ [0, L]
-    z_half = sample_uniform(n_domain, 0.0, L)
-
+    z_half = sample_uniform(
+        n_domain,
+        0.0,
+        H_trunc
+    )
     return (
         z_layer.to(DEVICE),
         z_half.to(DEVICE),
@@ -44,7 +48,7 @@ def sample_top_surface(n_boundary, geom):
     Top free surface at z = -H (non-dimensional)
     """
 
-    H = geom.get("H", 6.0)
+    H = geom["L"]
 
     z_top = torch.full(
         (n_boundary, 1),
@@ -80,6 +84,18 @@ def sample_far_field(n_far, geom):
 
     L = geom.get("L", 29.0*6)
 
-    z_far = torch.full((n_far, 1), L)
+    H_trunc = geom["H_trunc"]
+
+    z_far = torch.full(
+
+        (n_far,1),
+
+        H_trunc,
+
+        dtype=torch.float32,
+
+        device=DEVICE
+
+    )
 
     return z_far.to(DEVICE)
