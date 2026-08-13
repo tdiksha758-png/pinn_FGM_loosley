@@ -8,19 +8,60 @@ import torch.nn as nn
 
 class PINN(nn.Module):
 
-    def __init__(self, in_dim, out_dim, width=128, depth=8):
+    def __init__(
+        self,
+        in_dim,
+        out_dim,
+        width=128,
+        depth=8,
+        activation="tanh"
+    ):
 
         super().__init__()
 
         layers = []
+
+        # --------------------------------------------------
+        # Select activation
+        # --------------------------------------------------
+
+        def get_activation():
+
+            if activation == "tanh":
+                return nn.Tanh()
+
+            elif activation == "sigmoid":
+                return nn.Sigmoid()
+
+            elif activation == "softplus":
+                return nn.Softplus()
+
+            elif activation == "relu":
+                return nn.ReLU()
+
+            elif activation == "swish":
+                return nn.SiLU()
+
+            else:
+                raise ValueError(
+                    f"Unknown activation: {activation}"
+                )
+
+        # --------------------------------------------------
+        # Input layer
+        # --------------------------------------------------
 
         layers.append(
             nn.Linear(in_dim, width)
         )
 
         layers.append(
-            nn.Tanh()
+            get_activation()
         )
+
+        # --------------------------------------------------
+        # Hidden layers
+        # --------------------------------------------------
 
         for _ in range(depth - 1):
 
@@ -29,14 +70,22 @@ class PINN(nn.Module):
             )
 
             layers.append(
-                nn.Tanh()
+                get_activation()
             )
+
+        # --------------------------------------------------
+        # Output layer
+        # --------------------------------------------------
 
         layers.append(
             nn.Linear(width, out_dim)
         )
 
         self.model = nn.Sequential(*layers)
+
+    # ------------------------------------------------------
+    # Forward
+    # ------------------------------------------------------
 
     def forward(self, x):
 
@@ -47,7 +96,7 @@ class PINN(nn.Module):
 # Network Factory
 # ==========================================================
 
-def get_all_networks():
+def get_all_networks(activation="tanh"):
 
     # ------------------------------------------------------
     # Layer
@@ -60,7 +109,8 @@ def get_all_networks():
         in_dim=1,
         out_dim=2,
         width=30,
-        depth=5
+        depth=5,
+        activation=activation
     )
 
     # ------------------------------------------------------
@@ -74,7 +124,8 @@ def get_all_networks():
         in_dim=1,
         out_dim=2,
         width=30,
-        depth=5
+        depth=5,
+        activation=activation
     )
 
     return net_layer, net_halfspace
