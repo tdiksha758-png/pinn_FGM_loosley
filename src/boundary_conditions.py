@@ -13,165 +13,136 @@ def grad_bc(u, x):
 
 
 # ==================================================
-# 🔹 TOP SURFACE (x = -h1)  — SHORT CIRCUIT
-#    BC: σ_xz = 0,  φ = 0
+# 🔹 TOP SURFACE (x = -h1)  — Layer 1
+#
+#  BC1:  C44_1 * dw1/dx + q15_1 * dpsi1/dx = 0
+#  BC2:  psi1 = 0
 # ==================================================
-def top_surface_bc(model_L1, x_top, params_L1, k, c):
+def top_surface_bc(model_L1, x_top, params_L1, k):
 
     x_top = x_top.clone().detach().requires_grad_(True)
-    
+
     # Create [x, k] input tensor
     k_top = torch.full_like(x_top, k.item() if hasattr(k, 'item') else float(k))
     inp_top = torch.cat([x_top, k_top], dim=1)
-    
+
     out = model_L1(inp_top)
 
-    U_r, U_i = out[:, 0:1], out[:, 1:2]
-    Phi_r, Phi_i = out[:, 2:3], out[:, 3:4]
+    w1, psi1 = out[:, 0:1], out[:, 1:2]
 
-    U_r_x   = grad_bc(U_r,   x_top)
-    U_i_x   = grad_bc(U_i,   x_top)
-    Phi_r_x = grad_bc(Phi_r, x_top)
-    Phi_i_x = grad_bc(Phi_i, x_top)
+    w1_x   = grad_bc(w1,   x_top)
+    psi1_x = grad_bc(psi1, x_top)
 
-    C_r = params_L1["C44R1"]
-    C_i = k*c*params_L1["C44I1"]
-    e_r = params_L1["e15R1"]
-    e_i = k*c*params_L1["e15I1"]
+    C44_1 = params_L1["C44_1"]
+    q15_1 = params_L1["q15_1"]
 
-    # σ_xz = C*∂u + e*∂φ = 0
-    # Divide by C_r so residual ~ O(∂u) ~ O(1)
-    sigma_r = (C_r * U_r_x - C_i * U_i_x + e_r * Phi_r_x - e_i * Phi_i_x) / C_r
-    sigma_i = (C_r * U_i_x + C_i * U_r_x + e_r * Phi_i_x + e_i * Phi_r_x) / C_r
+    # BC1: generalized stress-free surface
+    bc1 = (C44_1 * w1_x + q15_1 * psi1_x)/C44_1
 
-    # φ = 0  (network output, no scaling needed)
-    return sigma_r, sigma_i, Phi_r, Phi_i
+    # BC2: magnetic potential vanishes
+    bc2 = psi1
+
+    return bc1, bc2
 
 
 # ==================================================
-# 🔹 BOTTOM SURFACE (x = h2)
-#    BC: σ_xz = 0,  D_x = 0
+# 🔹 BOTTOM SURFACE (x = h2)  — Layer 2
+#
+#  BC3:  C44_2 * dw2/dx + q15_2 * dpsi2/dx = 0
+#  BC4:  q15_2 * dw2/dx - mu11_2 * dpsi2/dx = 0
 # ==================================================
-def bottom_surface_bc(model_L2, x_bot, params_L2, k, c):
+def bottom_surface_bc(model_L2, x_bot, params_L2, k):
 
     x_bot = x_bot.clone().detach().requires_grad_(True)
-    
+
     # Create [x, k] input tensor
     k_bot = torch.full_like(x_bot, k.item() if hasattr(k, 'item') else float(k))
     inp_bot = torch.cat([x_bot, k_bot], dim=1)
-    
+
     out = model_L2(inp_bot)
 
-    U_r, U_i = out[:, 0:1], out[:, 1:2]
-    Phi_r, Phi_i = out[:, 2:3], out[:, 3:4]
+    w2, psi2 = out[:, 0:1], out[:, 1:2]
 
-    U_r_x   = grad_bc(U_r,   x_bot)
-    U_i_x   = grad_bc(U_i,   x_bot)
-    Phi_r_x = grad_bc(Phi_r, x_bot)
-    Phi_i_x = grad_bc(Phi_i, x_bot)
+    w2_x   = grad_bc(w2,   x_bot)
+    psi2_x = grad_bc(psi2, x_bot)
 
-    C_r   = params_L2["C44R2"];  C_i   = k*c * params_L2["C44I2"]
-    e_r   = params_L2["e15R2"];  e_i   = k*c * params_L2["e15I2"]
-    tau_r = params_L2["tauR2"];  tau_i = k*c * params_L2["tauI2"]
+    C44_2  = params_L2["C44_2"]
+    q15_2  = params_L2["q15_2"]
+    mu11_2 = params_L2["mu11_2"]
 
-    # σ_xz = 0  — divide by C_r
-    sigma_r = (C_r * U_r_x - C_i * U_i_x + e_r * Phi_r_x - e_i * Phi_i_x) / C_r
-    sigma_i = (C_r * U_i_x + C_i * U_r_x + e_r * Phi_i_x + e_i * Phi_r_x) / C_r
+    # BC3: generalized stress-free surface
+    bc3 = (C44_2 * w2_x + q15_2 * psi2_x)/C44_2
 
-    # D_x = e*∂u - tau*∂φ = 0  — divide by e_r so residual ~ O(∂u)
-    Dx_r = (e_r * U_r_x - e_i * U_i_x - tau_r * Phi_r_x + tau_i * Phi_i_x) / e_r
-    Dx_i = (e_r * U_i_x + e_i * U_r_x - tau_r * Phi_i_x - tau_i * Phi_r_x) / e_r
+    # BC4: magnetic induction condition
+    bc4 = (q15_2 * w2_x - mu11_2 * psi2_x)/q15_2
 
-    return sigma_r, sigma_i, Dx_r, Dx_i
+    return bc3, bc4
 
 
 # ==================================================
 # 🔹 INTERFACE (x = 0) — imperfect sliding contact
 #
-#  (1)  σ1 = (1-δ) σ2
-#  (2)  δ σ1 + (1-δ) kF u2 = (1-δ) kF u1
-#         ↔  δ σ1 + (1-δ) kF (u2 - u1) = 0
-#  (3)  φ1 = (1-δ) φ2
-#  (4)  D1 = (1-δ) D2
+#  BC5: [C44_1 dw1/dx + q15_1 dpsi1/dx] - (1-δ)[C44_2 dw2/dx + q15_2 dpsi2/dx] = 0
+#  BC6: δ[C44_1 dw1/dx + q15_1 dpsi1/dx] + (1-δ)kF(w2 - w1) = 0
+#  BC7: psi1 - (1-δ) psi2 = 0
+#  BC8: [q15_1 dw1/dx - mu11_1 dpsi1/dx] - (1-δ)[q15_2 dw2/dx - mu11_2 dpsi2/dx] = 0
 # ==================================================
 def imperfect_interface_bc(
     model_L1, model_L2, x_int,
     params_L1, params_L2, params_int,
-    k, c
+    k
 ):
     delta = params_int["delta"]
     F     = params_int["F"]
 
     x_int = x_int.clone().detach().requires_grad_(True)
 
-    # Create [x, k] input tensors
+    # Create [x, k] input tensor
     k_int = torch.full_like(x_int, k.item() if hasattr(k, 'item') else float(k))
     inp_int = torch.cat([x_int, k_int], dim=1)
 
     out1 = model_L1(inp_int)
     out2 = model_L2(inp_int)
 
-    U1_r,   U1_i   = out1[:, 0:1], out1[:, 1:2]
-    Phi1_r, Phi1_i = out1[:, 2:3], out1[:, 3:4]
+    w1, psi1 = out1[:, 0:1], out1[:, 1:2]
+    w2, psi2 = out2[:, 0:1], out2[:, 1:2]
 
-    U2_r,   U2_i   = out2[:, 0:1], out2[:, 1:2]
-    Phi2_r, Phi2_i = out2[:, 2:3], out2[:, 3:4]
+    w1_x   = grad_bc(w1,   x_int)
+    psi1_x = grad_bc(psi1, x_int)
 
-    U1_r_x   = grad_bc(U1_r,   x_int)
-    U1_i_x   = grad_bc(U1_i,   x_int)
-    Phi1_r_x = grad_bc(Phi1_r, x_int)
-    Phi1_i_x = grad_bc(Phi1_i, x_int)
+    w2_x   = grad_bc(w2,   x_int)
+    psi2_x = grad_bc(psi2, x_int)
 
-    U2_r_x   = grad_bc(U2_r,   x_int)
-    U2_i_x   = grad_bc(U2_i,   x_int)
-    Phi2_r_x = grad_bc(Phi2_r, x_int)
-    Phi2_i_x = grad_bc(Phi2_i, x_int)
+    # ── Layer 1 material constants ──────────────────────────────
+    C44_1  = params_L1["C44_1"]
+    q15_1  = params_L1["q15_1"]
+    mu11_1 = params_L1["mu11_1"]
 
-    # ── Layer 1 ───────────────────────────────────────────────────────────────
-    C1_r   = params_L1["C44R1"];   C1_i   = k*c * params_L1["C44I1"]
-    e1_r   = params_L1["e15R1"];   e1_i   = k*c * params_L1["e15I1"]
-    tau1_r = params_L1["tauR1"];   tau1_i = k*c * params_L1["tauI1"]
+    # ── Layer 2 material constants ──────────────────────────────
+    C44_2  = params_L2["C44_2"]
+    q15_2  = params_L2["q15_2"]
+    mu11_2 = params_L2["mu11_2"]
 
-    # ── Layer 2 ───────────────────────────────────────────────────────────────
-    C2_r   = params_L2["C44R2"];   C2_i   = k * c * params_L2["C44I2"]
-    e2_r   = params_L2["e15R2"];   e2_i   = k * c * params_L2["e15I2"]
-    tau2_r = params_L2["tauR2"];   tau2_i = k * c * params_L2["tauI2"]
+    # ── Generalized stresses ────────────────────────────────────
+    stress1 = C44_1 * w1_x + q15_1 * psi1_x
+    stress2 = C44_2 * w2_x + q15_2 * psi2_x
 
-    # ── Stresses (physical units, Pa/m) ───────────────────────────────────────
-    sig1_r = C1_r*U1_r_x - C1_i*U1_i_x + e1_r*Phi1_r_x - e1_i*Phi1_i_x
-    sig1_i = C1_r*U1_i_x + C1_i*U1_r_x + e1_r*Phi1_i_x + e1_i*Phi1_r_x
-
-    sig2_r = C2_r*U2_r_x - C2_i*U2_i_x + e2_r*Phi2_r_x - e2_i*Phi2_i_x
-    sig2_i = C2_r*U2_i_x + C2_i*U2_r_x + e2_r*Phi2_i_x + e2_i*Phi2_r_x
-
-    # ── Electric displacements (physical units, C/m²) ─────────────────────────
-    Dx1_r = e1_r*U1_r_x - e1_i*U1_i_x - tau1_r*Phi1_r_x + tau1_i*Phi1_i_x
-    Dx1_i = e1_r*U1_i_x + e1_i*U1_r_x - tau1_r*Phi1_i_x - tau1_i*Phi1_r_x
-
-    Dx2_r = e2_r*U2_r_x - e2_i*U2_i_x - tau2_r*Phi2_r_x + tau2_i*Phi2_i_x
-    Dx2_i = e2_r*U2_i_x + e2_i*U2_r_x - tau2_r*Phi2_i_x - tau2_i*Phi2_r_x
+    # ── Generalized magnetic inductions ─────────────────────────
+    induction1 = q15_1 * w1_x - mu11_1 * psi1_x
+    induction2 = q15_2 * w2_x - mu11_2 * psi2_x
 
     one_d = 1.0 - delta
 
-    # ── Eq (1): σ1 - (1-δ) σ2 = 0
-    #    Units: Pa/m  →  divide by C1_r to get O(∂u) ~ O(1)
-    eq1_r = (sig1_r/one_d -  sig2_r) / C1_r
-    eq1_i = (sig1_i/one_d -  sig2_i) / C1_r
+    # BC5: stress continuity (sliding-weighted)
+    bc5 = (stress1 - one_d * stress2)/C44_1
 
-    # ── Eq (2): δ σ1 + (1-δ) kF (u2 - u1) = 0
-    #    [δ σ1] ~ Pa/m,  [(1-δ) kF Δu] ~ (1/m)(Pa/m)(m) = Pa/m  ✓ consistent
-    #    divide by C1_r
-    eq2_r = ((delta * sig1_r)/one_d + (k * F * (U2_r - U1_r))) / C1_r
-    eq2_i = ((delta * sig1_i)/one_d + (k * F * (U2_i - U1_i))) / C1_r
+    # BC6: sliding/traction balance
+    bc6 = (delta * stress1 + one_d * k * F * (w2 - w1))/C44_1
 
-    # ── Eq (3): φ1 - (1-δ) φ2 = 0
-    #    Both are network outputs with same units; no extra scaling needed.
-    eq3_r = (Phi1_r/one_d - Phi2_r)/C1_r
-    eq3_i = (Phi1_i/one_d - Phi2_i)/C1_r
+    # BC7: magnetic potential continuity (sliding-weighted)
+    bc7 = psi1 - one_d * psi2
 
-    # ── Eq (4): D1 - (1-δ) D2 = 0
-    #    Units: C/m²  →  divide by e1_r to get O(∂u) ~ O(1)
-    eq4_r = (Dx1_r/one_d -  Dx2_r) / e1_r
-    eq4_i = (Dx1_i/one_d -  Dx2_i) / e1_r
+    # BC8: magnetic induction continuity (sliding-weighted)
+    bc8 = (induction1 - one_d * induction2)/q15_1
 
-    return eq1_r, eq1_i, eq2_r, eq2_i, eq3_r, eq3_i, eq4_r, eq4_i
+    return bc5, bc6, bc7, bc8

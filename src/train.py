@@ -7,7 +7,7 @@ from .sampling import (
     sample_domain_points,
     sample_top_surface,
     sample_interface,
-    sample_far_field
+    sample_bottom_surface
 )
 from .losses import total_loss
 
@@ -21,13 +21,11 @@ def train_for_single_k(
     k,
     model_L1,
     model_L2,
-    model_L3,
     c,
     n_epochs=5000,
     n_domain=5000,
     n_bc=1000,
     n_int=1000,
-    n_far=1000,
     lr=1e-3
 ):
 
@@ -51,14 +49,14 @@ def train_for_single_k(
     params_L1 = to_tensor_dict(params_L1)
     params_L2 = to_tensor_dict(params_L2)
     params_int = to_tensor_dict(CONFIG["INTERFACE"])
-    params_L3 = to_tensor_dict(CONFIG["AIR"])
 
     weights = CONFIG["TRAINING"]["loss_weights"]
+
     # --------------------------------------------------
     # 🔹 Shear wave speeds (ADDED)
     # --------------------------------------------------
-    c_shear_L1 = torch.sqrt(params_L1["C44R1"] / params_L1["rho1"])
-    c_shear_L2 = torch.sqrt(params_L2["C44R2"] / params_L2["rho2"])
+    c_shear_L1 = torch.sqrt(params_L1["C44_1"] / params_L1["rho1"])
+    c_shear_L2 = torch.sqrt(params_L2["C44_2"] / params_L2["rho2"])
 
     # --------------------------------------------------
     # Optimizer
@@ -67,7 +65,6 @@ def train_for_single_k(
         [
             {"params": model_L1.parameters(), "lr": lr},
             {"params": model_L2.parameters(), "lr": lr},
-            {"params": model_L3.parameters(), "lr": lr},
             {"params": [c], "lr": 1e-4},
         ]
     )
@@ -81,11 +78,11 @@ def train_for_single_k(
     for epoch in range(1, n_epochs + 1):
 
         # -------- Sampling --------
-        x_L1, x_L2, x_L3 = sample_domain_points(n_domain, domain)
+        x_L1, x_L2 = sample_domain_points(n_domain, domain)
 
         x_top = sample_top_surface(n_bc, geom)
         x_int = sample_interface(n_int)
-        x_bot = sample_far_field(n_far, geom)
+        x_bot = sample_bottom_surface(n_bc, geom)
 
         def ensure_tensor(x):
             if not isinstance(x, torch.Tensor):
@@ -96,7 +93,6 @@ def train_for_single_k(
 
         x_L1 = ensure_tensor(x_L1)
         x_L2 = ensure_tensor(x_L2)
-        x_L3 = ensure_tensor(x_L3)
 
         x_top = ensure_tensor(x_top)
         x_int = ensure_tensor(x_int)
@@ -108,24 +104,19 @@ def train_for_single_k(
         loss, logs = total_loss(
          model_L1,
          model_L2,
-         model_L3,
          x_L1,
          x_L2,
-         x_L3,
          x_top,
          x_int,
          x_bot,
          params_L1,
          params_L2,
-         params_L3,
          params_int,
          k,
          c,
          u_pde=weights["pde"],
-         u_air=weights["air"],
          u_bc=weights["bc"],
-         u_int=weights["interface"],
-         u_amp=weights["normalization"]
+         u_int=weights["interface"]
          )
 
         # --------------------------------------------------
@@ -142,8 +133,7 @@ def train_for_single_k(
 
         torch.nn.utils.clip_grad_norm_(
             list(model_L1.parameters()) +
-            list(model_L2.parameters()) +
-            list(model_L3.parameters()),
+            list(model_L2.parameters()),
             max_norm=1.0
         )
 
@@ -161,10 +151,9 @@ def train_for_single_k(
                 f"Loss = {total_loss_val.item():.3e} | "
                 f"c = {c.item():.6f} | "
                 f"PDE = {logs.get('pde',0):.2e} | "
-                f"BC = {logs.get('bc_top',0):.2e} | "
-                f"INT = {logs.get('interface',0):.2e} | "
-                f"FAR = {logs.get('far',0):.2e} | "
-                f"AMP = {logs.get('amp',0):.2e}"
+                f"BC_TOP = {logs.get('bc_top',0):.2e} | "
+                f"BC_BOT = {logs.get('bc_bottom',0):.2e} | "
+                f"INT = {logs.get('interface',0):.2e}"
             )
 
     return best_c
@@ -181,19 +170,18 @@ def train_dispersion():
         CONFIG["WAVENUMBER"]["num_k"]
     )
 
-    model_L1, model_L2, model_L3 = get_all_networks()
+    model_L1, model_L2 = get_all_networks()
 
     model_L1.to(DEVICE)
     model_L2.to(DEVICE)
-    model_L3.to(DEVICE)
 
     # 🔹 Better initial guess using shear speeds (ADDED)
     params_L1 = CONFIG["LAYER1"]
     params_L2 = CONFIG["LAYER2"]
 
     c_init = 0.5 * (
-        (params_L1["C44R1"] / params_L1["rho1"])**0.5 +
-        (params_L2["C44R2"] / params_L2["rho2"])**0.5
+        (params_L1["C44_1"] / params_L1["rho1"])**0.5 +
+        (params_L2["C44_2"] / params_L2["rho2"])**0.5
     )
 
     c = torch.nn.Parameter(
@@ -212,7 +200,6 @@ def train_dispersion():
             k.item(),
             model_L1,
             model_L2,
-            model_L3,
             c,
             n_epochs=5000 if idx == 0 else 2500
         )
@@ -227,7 +214,7 @@ def train_dispersion():
 # ==================================================
 if __name__ == "__main__":
 
-    print("\nRunning PINN solver (3-layer piezo-viscoelastic)...\n")
+    print("\nRunning PINN solver (2-layer piezomagnetic)...\n")
 
     results = train_dispersion()
 

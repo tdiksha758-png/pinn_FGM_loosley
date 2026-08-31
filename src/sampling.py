@@ -13,27 +13,24 @@ def sample_uniform(n, low, high):
 
 
 # --------------------------------------------------
-# Domain sampling (3 regions)
+# Domain sampling (2 regions — no air layer)
 # --------------------------------------------------
 def sample_domain_points(n_domain, domain):
     """
     Returns:
-        x_L1 : points in layer1   [domain["LAYER1"][0], domain["LAYER1"][1]]
-        x_L2 : points in layer2   [domain["LAYER2"][0], domain["LAYER2"][1]]
-        x_L3 : points in air      [domain["AIR"][0], domain["AIR"][1]]
+        x_L1 : points in layer1   [domain["layer1"][0], domain["layer1"][1]]
+        x_L2 : points in layer2   [domain["layer2"][0], domain["layer2"][1]]
     """
 
     # Unpack ranges
-    xL1_min, xL1_max = domain["LAYER1"]
-    xL2_min, xL2_max = domain["LAYER2"]
-    xL3_min, xL3_max = domain["AIR"]
+    xL1_min, xL1_max = domain["layer1"]
+    xL2_min, xL2_max = domain["layer2"]
 
     # Sample
     x_L1 = sample_uniform(n_domain, xL1_min, xL1_max)
     x_L2 = sample_uniform(n_domain, xL2_min, xL2_max)
-    x_L3 = sample_uniform(n_domain, xL3_min, xL3_max)
 
-    return x_L1, x_L2, x_L3
+    return x_L1, x_L2
 
 
 # --------------------------------------------------
@@ -87,26 +84,3 @@ def sample_bottom_surface(n_boundary, geom):
     )
 
     return x_bot
-
-
-# --------------------------------------------------
-# Air far-field (x = -h1 - h3)
-# --------------------------------------------------
-# Generic far-field sampler (wrapper)
-def sample_far_field(n_far, geom):
-    """
-    Far-field in air at x = -h1 - h3
-    """
-
-    h1 = geom["h1"]
-    h3 = geom["h3"]
-
-    x_far = torch.full(
-        (n_far, 1),
-        -(float(h1) + float(h3)),
-        
-        dtype=torch.float32,
-        device=DEVICE
-    )
-
-    return x_far

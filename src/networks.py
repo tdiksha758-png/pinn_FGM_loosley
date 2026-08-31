@@ -8,7 +8,7 @@ import torch.nn as nn
 class PINN(nn.Module):
     """
     Fully-connected neural network for multi-field PINN
-    Outputs: [U_r, U_i, Phi_r, Phi_i]
+    Outputs: [w, psi]  (mechanical displacement, magnetic potential)
     """
 
     def __init__(self, in_dim, out_dim, width=64, depth=3):
@@ -36,32 +36,25 @@ class PINN(nn.Module):
 def get_all_networks(width=128, depth=5):
     """
     Returns PINN models for:
-    - Layer 1 (piezo-viscoelastic)
-    - Layer 2 (piezo-viscoelastic)
-    - Air layer (electrostatic)
-    
+    - Layer 1 (piezomagnetic)
+    - Layer 2 (piezomagnetic)
+
+    No air layer — two-layer piezomagnetic structure only.
+
     ✅ INCREASED CAPACITY for better convergence
     """
 
     net_L1 = PINN(
         in_dim=2,
-        out_dim=4,
+        out_dim=2,
         width=width,
         depth=depth
     )
     net_L2 = PINN(
         in_dim=2,
-        out_dim=4,
+        out_dim=2,
         width=width,
         depth=depth
     )
 
-    # 🔹 Air layer
-    net_L3 = PINN(
-        in_dim=2,
-        out_dim=4,
-        width=width,
-        depth=depth
-    )
-
-    return net_L1, net_L2, net_L3
+    return net_L1, net_L2
