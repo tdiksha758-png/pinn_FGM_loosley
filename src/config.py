@@ -66,17 +66,29 @@ CONFIG = {
     # 🔹 Wavenumber sweep
     #     k = x / h1, with x in [2.52, 5] from the MATLAB grid
     # --------------------------------------------------
+    # for delta = 0.02
     "WAVENUMBER": {
         "k_min": 0.4576,
         "k_max": 0.8333,
         "num_k": 12
     },
-
+    # # for delta = 0.2
+    # "WAVENUMBER": {
+    #     "k_min": 0.516,
+    #     "k_max": 0.833,
+    #     "num_k": 12
+    # },
+    # # for delta = 0.002
+    #     "WAVENUMBER": {
+    #         "k_min": 0.4325,
+    #         "k_max": 0.754,
+    #         "num_k": 12
+    #     },
     # --------------------------------------------------
     # 🔹 Training parameters
     # --------------------------------------------------
     "TRAINING": {
-        "epochs": 20,
+        "epochs": 10000,
         "learning_rate": 5e-4,
 
         "loss_weights": {
