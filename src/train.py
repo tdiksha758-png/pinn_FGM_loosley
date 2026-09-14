@@ -1,5 +1,6 @@
 import torch
 import torch.optim as optim
+
 from networks import get_all_networks
 from config import CONFIG
 from sampling import (
@@ -9,6 +10,7 @@ from sampling import (
     sample_far_field
 )
 from losses import total_loss
+
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -29,8 +31,9 @@ def train_for_single_k(
     lr=1e-3
 ):
     """
-    Train PINN for a fixed wave number k (Love-wave / SH mode)
-    Returns learned phase velocity c
+    Train PINN for a fixed wavenumber k.
+
+    Returns learned phase velocity c.
     """
 
     print(f"\nTraining for k = {k:.3f} on {DEVICE}")
@@ -39,34 +42,66 @@ def train_for_single_k(
     # Load parameters
     # --------------------------------------------------
     params_layer = CONFIG["LAYER"]
-    params_half  = CONFIG["SUBSTRATE"]
-    geom         = CONFIG["GEOMETRY"]
+    params_half = CONFIG["SUBSTRATE"]
+    geom = CONFIG["GEOMETRY"]
 
-    # Convert parameters to tensors
+    # --------------------------------------------------
+    # Convert numerical parameters to tensors
+    # --------------------------------------------------
     params_layer = {
-        key: torch.tensor(val, device=DEVICE, dtype=torch.float32)
-        if isinstance(val, (int, float)) else val
+        key: torch.tensor(
+            val,
+            device=DEVICE,
+            dtype=torch.float32
+        )
+        if isinstance(val, (int, float))
+        else val
         for key, val in params_layer.items()
     }
 
     params_half = {
-        key: torch.tensor(val, device=DEVICE, dtype=torch.float32)
-        if isinstance(val, (int, float)) else val
+        key: torch.tensor(
+            val,
+            device=DEVICE,
+            dtype=torch.float32
+        )
+        if isinstance(val, (int, float))
+        else val
         for key, val in params_half.items()
     }
 
-    # Compute layer and half-space shear velocities
-    c_shear_layer = torch.sqrt(params_layer["mu_0"] / params_layer["rho_0"])
-    c_shear_half  = torch.sqrt(params_half["mu_0"] / params_half["rho_0"])
+    # --------------------------------------------------
+    # Reference / shear velocities
+    #
+    # beta_l = sqrt(c44_l / rho_l)
+    # --------------------------------------------------
+    beta_l = torch.sqrt(
+        params_layer["c44_l"] /
+        params_layer["rho_l"]
+    )
+
+    beta_h = torch.sqrt(
+        params_half["c44_h"] /
+        params_half["rho_h"]
+    )
 
     # --------------------------------------------------
-    # Optimizer (model + eigenvalue)
+    # Optimizer
     # --------------------------------------------------
     optimizer = optim.Adam(
         [
-            {"params": model_layer.parameters(), "lr": lr},
-            {"params": model_half.parameters(), "lr": lr},
-            {"params": [c], "lr": 1e-4},  # eigenvalue learns slowly
+            {
+                "params": model_layer.parameters(),
+                "lr": lr
+            },
+            {
+                "params": model_half.parameters(),
+                "lr": lr
+            },
+            {
+                "params": [c],
+                "lr": 1e-4
+            }
         ]
     )
 
@@ -78,24 +113,33 @@ def train_for_single_k(
     # --------------------------------------------------
     for epoch in range(1, n_epochs + 1):
 
-        # ---- Sample collocation points ----
-        z_layer, z_half = sample_domain_points(n_domain, geom)
-        z_top  = sample_top_surface(n_bc, geom)
-        z_int  = sample_interface(n_int)
-        z_far  = sample_far_field(n_far, geom)
+        # ----------------------------------------------
+        # Sample collocation points
+        # ----------------------------------------------
+        z_layer, z_half = sample_domain_points(
+            n_domain,
+            geom
+        )
 
-        # Ensure tensors
-        for name in ["z_layer", "z_half", "z_top", "z_int", "z_far"]:
-            arr = locals()[name]
-            if not isinstance(arr, torch.Tensor):
-                arr = torch.tensor(arr, dtype=torch.float32, device=DEVICE)
-            if arr.ndim == 1:
-                arr = arr.unsqueeze(1)
-            locals()[name] = arr
+        z_top = sample_top_surface(
+            n_bc,
+            geom
+        )
+
+        z_int = sample_interface(
+            n_int
+        )
+
+        z_far = sample_far_field(
+            n_far,
+            geom
+        )
 
         optimizer.zero_grad()
 
-        # ---- Total PINN loss (includes PDE, BCs, interface, far-field, amplitude) ----
+        # ----------------------------------------------
+        # Total PINN loss
+        # ----------------------------------------------
         loss, logs = total_loss(
             model_layer,
             model_half,
@@ -108,43 +152,64 @@ def train_for_single_k(
             params_half,
             k,
             c,
-            w_pde=1.0,
-            w_bc=10.0,
-            w_int=50.0,  # interface weight
-            w_far=5.0,
-            w_amp=100.0  # amplitude fixing at top
+            w_pde=10.0,
+            w_bc=1.0,
+            w_int=0.01,
+            w_far=0.01,
+            w_amp=100.0
         )
 
-        # --------------------------------------------------
-        # Love-wave physics penalty
-        # --------------------------------------------------
+        # ----------------------------------------------
+        # Phase velocity constraint
+        # ----------------------------------------------
         physics_penalty = (
-            1000.0 * torch.relu(c_shear_layer - c)**2 +
-            1000.0 * torch.relu(c - c_shear_half)**2
+            1000.0 *
+            torch.relu(beta_l - c)**2
         )
 
-        total_loss_val = loss + physics_penalty
+        total_loss_val = (
+            loss + physics_penalty
+        )
+
+        # ----------------------------------------------
+        # Backpropagation
+        # ----------------------------------------------
         total_loss_val.backward()
 
+        # ----------------------------------------------
         # Gradient clipping
+        # ----------------------------------------------
         torch.nn.utils.clip_grad_norm_(
-            list(model_layer.parameters()) + list(model_half.parameters()),
+            list(model_layer.parameters())
+            + list(model_half.parameters()),
             max_norm=1.0
         )
 
         optimizer.step()
 
-        # Hard clamp for eigenvalue c
+        # ----------------------------------------------
+        # Keep c in a physically reasonable range
+        # ----------------------------------------------
         with torch.no_grad():
-            c.data.clamp_(c_shear_layer * 1.001, c_shear_half * 0.999)
 
-        # Track best
+            c.data.clamp_(
+                beta_l * 0.001,
+                beta_l * 0.999
+            )
+
+        # ----------------------------------------------
+        # Track best solution
+        # ----------------------------------------------
         if total_loss_val.item() < best_loss:
+
             best_loss = total_loss_val.item()
             best_c = c.item()
 
+        # ----------------------------------------------
         # Logging
+        # ----------------------------------------------
         if epoch % 500 == 0:
+
             print(
                 f"Epoch {epoch:6d} | "
                 f"Loss = {loss.item():.3e} | "
@@ -154,7 +219,7 @@ def train_for_single_k(
                 f"BC = {logs.get('bc_top', 0):.2e} | "
                 f"INT = {logs.get('interface', 0):.2e} | "
                 f"FAR = {logs.get('far', 0):.2e} | "
-                f"AMP = {logs.get('amp',0):.2e}"
+                f"AMP = {logs.get('amp', 0):.2e}"
             )
 
     return best_c
@@ -164,36 +229,75 @@ def train_for_single_k(
 # Dispersion sweep over k
 # ==================================================
 def train_dispersion():
+
+    # --------------------------------------------------
+    # Geometry
+    # --------------------------------------------------
     geom = CONFIG["GEOMETRY"]
 
+    # --------------------------------------------------
+    # Wavenumber values
+    # --------------------------------------------------
+    wave = CONFIG["WAVENUMBER"]
+
     k_vals = torch.linspace(
-        geom["k_min"],
-        geom["k_max"],
-        geom["num_k"]
+        wave["k_min"],
+        wave["k_max"],
+        wave["num_k"],
+        device=DEVICE
     )
 
-    # Initialize networks ONCE
+    # --------------------------------------------------
+    # Initialize networks
+    # --------------------------------------------------
     model_layer, model_half = get_all_networks()
+
     model_layer.to(DEVICE)
     model_half.to(DEVICE)
 
-    # Initialize eigenvalue c
+    # --------------------------------------------------
+    # Material parameters
+    # --------------------------------------------------
     params_layer = CONFIG["LAYER"]
-    params_half  = CONFIG["HALFSPACE"]
+    params_half = CONFIG["SUBSTRATE"]
 
-    c_shear_layer = (params_layer["mu44_0"] / params_layer["rho_0"]) ** 0.5
-    c_shear_half  = (params_half["mu44_0"] / params_half["rho_0"]) ** 0.5
+    # --------------------------------------------------
+    # Reference velocity
+    #
+    # beta_l = sqrt(c44_l / rho_l)
+    # --------------------------------------------------
+    beta_l = (
+        params_layer["c44_l"]
+        / params_layer["rho_l"]
+    ) ** 0.5
+
+    # --------------------------------------------------
+    # Initial phase velocity
+    # --------------------------------------------------
+    c_init = 0.5 * beta_l
 
     c = torch.nn.Parameter(
-        torch.tensor(0.5*(c_shear_layer + c_shear_half),
-                     device=DEVICE,
-                     dtype=torch.float32)
+        torch.tensor(
+            c_init,
+            device=DEVICE,
+            dtype=torch.float32
+        )
     )
 
     dispersion = []
 
+    # --------------------------------------------------
+    # Sweep over wavenumber
+    # --------------------------------------------------
     for idx, k in enumerate(k_vals):
-        print(f"\n{'='*50}\nTraining for k = {k.item():.3f} ({idx+1}/{len(k_vals)})\n{'='*50}")
+
+        print(
+            f"\n{'='*50}\n"
+            f"Training for k = {k.item():.3f} "
+            f"({idx + 1}/{len(k_vals)})\n"
+            f"{'='*50}"
+        )
+
         c_val = train_for_single_k(
             k.item(),
             model_layer,
@@ -201,7 +305,10 @@ def train_dispersion():
             c,
             n_epochs=5000 if idx == 0 else 2500
         )
-        dispersion.append([k.item(), c_val])
+
+        dispersion.append(
+            [k.item(), c_val]
+        )
 
     return dispersion
 
@@ -210,25 +317,72 @@ def train_dispersion():
 # Main execution
 # ==================================================
 if __name__ == "__main__":
-    print("\nRunning Love-wave PINN solver...\n")
 
+    print(
+        "\nRunning piezomagnetic SH-wave "
+        "PINN solver...\n"
+    )
+
+    # --------------------------------------------------
+    # Initialize networks
+    # --------------------------------------------------
     model_layer, model_half = get_all_networks()
+
     model_layer.to(DEVICE)
     model_half.to(DEVICE)
 
+    # --------------------------------------------------
+    # Material parameters
+    # --------------------------------------------------
     params_layer = CONFIG["LAYER"]
-    params_half  = CONFIG["HALFSPACE"]
+    params_half = CONFIG["SUBSTRATE"]
 
-    c_init = 0.5 * ((params_layer["mu44_0"]/params_layer["rho_0"])**0.5 +
-                    (params_half["mu44_0"]/params_half["rho_0"])**0.5)
+    # --------------------------------------------------
+    # Reference velocity
+    # --------------------------------------------------
+    beta_l = (
+        params_layer["c44_l"]
+        / params_layer["rho_l"]
+    ) ** 0.5
 
-    c = torch.nn.Parameter(torch.tensor(c_init, device=DEVICE, dtype=torch.float32))
+    # --------------------------------------------------
+    # Initial phase velocity
+    # --------------------------------------------------
+    c_init = 0.5 * beta_l
 
-    test_k = 0.6
-    test_c = train_for_single_k(test_k, model_layer, model_half, c,
-                                n_epochs=1500, n_domain=200, n_bc=50, n_int=50, n_far=50, lr=1e-3)
-    print(f"\n✓ Test result: c({test_k}) = {test_c:.6f}")
+    c = torch.nn.Parameter(
+        torch.tensor(
+            c_init,
+            device=DEVICE,
+            dtype=torch.float32
+        )
+    )
 
-    # Full dispersion sweep (uncomment when ready)
+    # --------------------------------------------------
+    # Test case
+    # --------------------------------------------------
+    test_k = 0.05
+
+    test_c = train_for_single_k(
+        test_k,
+        model_layer,
+        model_half,
+        c,
+        n_epochs=1500,
+        n_domain=200,
+        n_bc=50,
+        n_int=50,
+        n_far=50,
+        lr=1e-3
+    )
+
+    print(
+        f"\n✓ Test result: "
+        f"c({test_k}) = {test_c:.6f}"
+    )
+
+    # --------------------------------------------------
+    # Full dispersion sweep
+    # --------------------------------------------------
     # dispersion = train_dispersion()
     # torch.save(dispersion, "dispersion_curve.pt")

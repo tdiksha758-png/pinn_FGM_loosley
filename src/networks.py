@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+
 # --------------------------------------------------
 # Generic PINN network
 # --------------------------------------------------
@@ -8,10 +9,12 @@ class PINN(nn.Module):
     """
     Fully-connected neural network for PINN
     """
+
     def __init__(self, in_dim, out_dim, width=128, depth=8):
         super().__init__()
 
         layers = []
+
         layers.append(nn.Linear(in_dim, width))
         layers.append(nn.Tanh())
 
@@ -20,6 +23,7 @@ class PINN(nn.Module):
             layers.append(nn.Tanh())
 
         layers.append(nn.Linear(width, out_dim))
+
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
@@ -27,29 +31,43 @@ class PINN(nn.Module):
 
 
 # --------------------------------------------------
-# Network factory for dispersion problem
+# Network factory for piezomagnetic dispersion problem
 # --------------------------------------------------
-def get_all_networks():
+def get_all_networks(width=50, depth=8):
     """
     Returns PINN models for:
-    - Functionally graded layer (single output: V)
-    - Functionally graded half-space (single output: V)
+
+    - Piezomagnetic upper layer (l)
+    - Piezomagnetic lower half-space (h)
+
+    Each network has two outputs:
+
+        output[:, 0:1] -> U
+        output[:, 1:2] -> Phi
     """
 
-    # Layer: input z → output V(z)
+    # --------------------------------------------------
+    # Upper piezomagnetic layer (l)
+    # Input: z
+    # Output: U^(l)(z), Phi^(l)(z)
+    # --------------------------------------------------
     net_layer = PINN(
         in_dim=1,
-        out_dim=1,   # single field
-        width=50,
-        depth=8
+        out_dim=2,
+        width=width,
+        depth=depth
     )
 
-    # Half-space: input z → output V(z)
+    # --------------------------------------------------
+    # Lower piezomagnetic half-space (h)
+    # Input: z
+    # Output: U^(h)(z), Phi^(h)(z)
+    # --------------------------------------------------
     net_halfspace = PINN(
         in_dim=1,
-        out_dim=1,   # single field
-        width=50,
-        depth=8
+        out_dim=2,
+        width=width,
+        depth=depth
     )
 
     return net_layer, net_halfspace

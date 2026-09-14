@@ -8,8 +8,11 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # --------------------------------------------------
 def sample_uniform(n, low, high):
     return low + (high - low) * torch.rand(
-        n, 1, device=DEVICE, dtype=torch.float32
+        n, 1,
+        device=DEVICE,
+        dtype=torch.float32
     )
+
 
 # --------------------------------------------------
 # Domain sampling
@@ -17,69 +20,98 @@ def sample_uniform(n, low, high):
 def sample_domain_points(n_domain, geom):
     """
     Returns:
-        z_layer   : points in layer domain [-H, 0] (non-dimensional)
-        z_half    : points in half-space [0, L] (non-dimensional)
+
+        z_layer : points in upper layer [-h1, 0]
+
+        z_half  : points in lower half-space
+                  [0, H_trunc]
     """
 
-    H = geom.get("H", 1.0)
-    L = geom.get("L", 29.0)
+    h1 = geom["h1"]
+    H_trunc = geom["H_trunc"]
 
-    # Layer: z ∈ [-H, 0]
-    z_layer = sample_uniform(n_domain, -H, 0.0)
+    # Upper piezomagnetic layer:
+    # z ∈ [-h1, 0]
+    z_layer = sample_uniform(
+        n_domain,
+        -h1,
+        0.0
+    )
 
-    # Half-space: z ∈ [0, L]
-    z_half = sample_uniform(n_domain, 0.0, L)
+    # Lower piezomagnetic half-space:
+    # z ∈ [0, H_trunc]
+    z_half = sample_uniform(
+        n_domain,
+        0.0,
+        H_trunc
+    )
 
     return (
         z_layer.to(DEVICE),
-        z_half.to(DEVICE),
+        z_half.to(DEVICE)
     )
 
 
 # --------------------------------------------------
-# Top surface boundary (z = -H)
+# Top surface boundary: z = -h1
 # --------------------------------------------------
 def sample_top_surface(n_boundary, geom):
     """
-    Top free surface at z = -H (non-dimensional)
+    Top free surface of the upper piezomagnetic layer:
+
+        z = -h1
     """
 
-    H = geom.get("H", 6.0)
+    h1 = geom["h1"]
 
     z_top = torch.full(
         (n_boundary, 1),
-        -float(H),                # force float value
-        dtype=torch.float32,      # force float dtype
+        -float(h1),
+        dtype=torch.float32,
         device=DEVICE
     )
 
     return z_top
 
 
-
 # --------------------------------------------------
-# Interface boundary (z = 0)
+# Interface boundary: z = 0
 # --------------------------------------------------
 def sample_interface(n_interface):
     """
-    Interface between layer and half-space at z = 0 (non-dimensional)
+    Interface between the upper layer and
+    lower half-space:
+
+        z = 0
     """
 
-    z_int = torch.zeros((n_interface, 1))
+    z_int = torch.zeros(
+        (n_interface, 1),
+        dtype=torch.float32,
+        device=DEVICE
+    )
 
-    return z_int.to(DEVICE)
+    return z_int
 
 
 # --------------------------------------------------
-# Far-field boundary (z = L)
+# Far-field boundary: z = H_trunc
 # --------------------------------------------------
 def sample_far_field(n_far, geom):
     """
-    Far-field boundary for half-space at z = L (non-dimensional)
+    Truncated far-field boundary of the lower
+    piezomagnetic half-space:
+
+        z = H_trunc
     """
 
-    L = geom.get("L", 29.0*6)
+    H_trunc = geom["H_trunc"]
 
-    z_far = torch.full((n_far, 1), L)
+    z_far = torch.full(
+        (n_far, 1),
+        float(H_trunc),
+        dtype=torch.float32,
+        device=DEVICE
+    )
 
-    return z_far.to(DEVICE)
+    return z_far
